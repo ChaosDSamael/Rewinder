@@ -2,6 +2,7 @@
 import * as M from './model.js';
 import * as store from './store.js';
 import * as V from './views.js';
+import * as tmdb from './tmdb.js';
 import { esc } from './ui.js';
 import { morphChildren } from './morph.js';
 
@@ -30,7 +31,8 @@ const state = {
     openEp: null,
     addSeasonOpen: false,
     homeScore: {},
-    focusAfter: null
+    focusAfter: null,
+    rescanning: null
   }
 };
 
@@ -401,6 +403,7 @@ function closeDialog() {
 }
 
 function onDialogClosed() {
+  stopScanSearch();
   dlg.innerHTML = '';
   if (confirmResolve) {
     const resolve = confirmResolve;
@@ -465,10 +468,16 @@ function autoStatus(t) {
 
 /* ---------- actions: titles ---------- */
 
-function openAdd(kind) {
+function kindFromPage(kind) {
   const r = state.route;
-  const k = M.KINDS.includes(kind) ? kind : r.name === 'browse' ? r.kind : state.current ? state.current.kind : 'movie';
-  openDialog(V.addDialog(k), '#add-title');
+  if (M.KINDS.includes(kind)) return kind;
+  return r.name === 'browse' ? r.kind : '';
+}
+
+function openAdd(kind, title = '') {
+  const k = kindFromPage(kind) || 'movie';
+  openDialog(V.addDialog(k, { title, noKey: !state.settings.tmdbKey }), '#add-title');
+  if (title) checkDuplicate(title);
 }
 
 function checkDuplicate(value) {
@@ -948,6 +957,167 @@ async function removeTag(tag) {
   await commit(t, `Removed the tag #${tag}`);
 }
 
+/* ---------- the Scan ---------- */
+
+const scan = { mode: 'add', linkId: null, linkTitle: '', query: '', results: [], loading: false, error: '', busy: '', status: 'watchlist', kindHint: '', timer: null, controller: null };
+
+function stopScanSearch() {
+  clearTimeout(scan.timer);
+  if (scan.controller) scan.controller.abort();
+  scan.controller = null;
+}
+
+function refreshScan() {
+  const box = document.getElementById('scan-results');
+  if (box) box.innerHTML = V.scanResults(scan, state.titles);
+}
+
+function openScan(kind, link) {
+  const k = kindFromPage(kind);
+  if (k === 'game' && !link) { openAdd('game'); return; }
+  if (!state.settings.tmdbKey) { openAdd(k); return; }
+  stopScanSearch();
+  Object.assign(scan, {
+    mode: link ? 'link' : 'add',
+    linkId: link ? link.id : null,
+    linkTitle: link ? link.title : '',
+    query: link ? link.title : '',
+    results: [],
+    loading: false,
+    error: '',
+    busy: '',
+    status: 'watchlist',
+    kindHint: k
+  });
+  openDialog(V.scanDialog(scan, state.titles), '#scan-q');
+  const input = document.getElementById('scan-q');
+  if (input) input.select();
+  if (scan.query) runSearch();
+}
+
+function scanTyped(value) {
+  scan.query = value;
+  scan.error = '';
+  clearTimeout(scan.timer);
+  scan.timer = setTimeout(runSearch, 350);
+}
+
+async function runSearch() {
+  const q = scan.query.trim();
+  if (scan.controller) scan.controller.abort();
+  scan.controller = null;
+  if (q.length < 2) {
+    scan.results = [];
+    scan.loading = false;
+    refreshScan();
+    return;
+  }
+  const controller = new AbortController();
+  scan.controller = controller;
+  scan.loading = true;
+  scan.error = '';
+  refreshScan();
+  try {
+    const results = await tmdb.search(q, state.settings.tmdbKey, controller.signal);
+    if (controller.signal.aborted) return;
+    // Opened from a category page: that kind first.
+    const hint = scan.kindHint;
+    scan.results = hint ? [...results.filter((r) => r.kind === hint), ...results.filter((r) => r.kind !== hint)] : results;
+  } catch (err) {
+    if (err && err.name === 'AbortError') return;
+    scan.results = [];
+    scan.error = err && err.message ? err.message : 'The search failed.';
+  }
+  if (scan.controller === controller) scan.controller = null;
+  scan.loading = false;
+  refreshScan();
+}
+
+async function pickScan(type, id, openId) {
+  if (openId) {
+    closeDialog();
+    go('#/title/' + encodeURIComponent(openId));
+    return;
+  }
+  if (scan.busy || (type !== 'movie' && type !== 'tv') || !Number.isInteger(id)) return;
+  const statusBox = document.getElementById('scan-status');
+  const status = statusBox && M.STATUSES.includes(statusBox.value) ? statusBox.value : 'watchlist';
+  const mode = scan.mode;
+  const linkId = scan.linkId;
+  stopScanSearch();
+  scan.busy = 'Scanning…';
+  scan.error = '';
+  refreshScan();
+  let data;
+  try {
+    data = await tmdb.fetchTitle(type, id, state.settings.tmdbKey, (step) => { scan.busy = step; refreshScan(); });
+  } catch (err) {
+    scan.busy = '';
+    scan.error = err && err.message ? err.message : 'The scan failed.';
+    refreshScan();
+    return;
+  }
+  scan.busy = '';
+  const already = M.live(state.titles).find((t) => t.tmdbId === data.tmdbId && t.tmdbType === data.tmdbType && t.id !== linkId);
+  if (already) {
+    closeDialog();
+    go('#/title/' + encodeURIComponent(already.id));
+    toast(`${already.title} is already in your list.`);
+    return;
+  }
+  const size = data.seasons ? ` · ${data.seasons.length} season${data.seasons.length === 1 ? '' : 's'}, ${data.seasons.reduce((n, x) => n + x.episodes.length, 0)} episodes` : '';
+  if (mode === 'link') {
+    const t = byId(linkId);
+    closeDialog();
+    if (!t) return;
+    M.mergeScan(t, data);
+    state.ui.openSeasons.clear();
+    openDefaultSeason(t);
+    render();
+    document.title = `${t.title} · Rewinder`;
+    toast(`${t.title} scanned${size}`);
+    await commit(t, `Scanned with TMDB${size}`);
+    return;
+  }
+  const t = M.newTitle({ kind: data.kind, status });
+  M.mergeScan(t, data);
+  state.titles.push(t);
+  state.history[t.id] = [];
+  closeDialog();
+  go('#/title/' + encodeURIComponent(t.id));
+  toast(`${t.title} added${size}`);
+  await persist(t);
+  countChange();
+  await log(t, `Added with Scan · ${M.STATUS_LABEL[status]}`);
+}
+
+async function rescan() {
+  const t = cur();
+  if (!t || t.kind === 'game' || state.ui.rescanning) return;
+  if (!state.settings.tmdbKey) {
+    toast('Add your TMDB key in Settings to scan.', { action: { label: 'Settings', run: () => go('#/settings') } });
+    return;
+  }
+  if (!t.tmdbId) {
+    openScan(t.kind, t);
+    return;
+  }
+  state.ui.rescanning = t.id;
+  render();
+  try {
+    const data = await tmdb.fetchTitle(t.tmdbType, t.tmdbId, state.settings.tmdbKey);
+    const counts = M.mergeScan(t, data);
+    const news = [counts.seasons ? `${counts.seasons} new season${counts.seasons === 1 ? '' : 's'}` : '', counts.episodes ? `${counts.episodes} new episode${counts.episodes === 1 ? '' : 's'}` : ''].filter(Boolean).join(', ');
+    toast(news ? `${t.title} · ${news}` : `${t.title} is up to date`);
+    await commit(t, news ? `Rescanned · ${news}` : 'Rescanned · up to date');
+  } catch (err) {
+    toast(err && err.message ? err.message : 'The scan failed.');
+  } finally {
+    state.ui.rescanning = null;
+    render();
+  }
+}
+
 /* ---------- backup ---------- */
 
 async function exportBackup() {
@@ -1069,14 +1239,12 @@ function registerWorker() {
       action: { label: 'Update', run: () => worker.postMessage('skipWaiting') },
       timeout: 0
     });
-    if (reg.waiting && hadController) offer(reg.waiting);
-    reg.addEventListener('updatefound', () => {
-      const worker = reg.installing;
-      if (!worker) return;
-      worker.addEventListener('statechange', () => {
-        if (worker.state === 'installed' && navigator.serviceWorker.controller) offer(worker);
-      });
+    const track = (worker) => worker.addEventListener('statechange', () => {
+      if (worker.state === 'installed' && navigator.serviceWorker.controller) offer(worker);
     });
+    if (reg.waiting && hadController) offer(reg.waiting);
+    if (reg.installing) track(reg.installing);
+    reg.addEventListener('updatefound', () => { if (reg.installing) track(reg.installing); });
     let lastCheck = Date.now();
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible' && Date.now() - lastCheck > 3600e3) {
@@ -1090,7 +1258,10 @@ function registerWorker() {
 /* ---------- events ---------- */
 
 const actions = {
-  add: (el) => openAdd(el.dataset.kind),
+  add: (el) => openScan(el.dataset.kind),
+  'scan-pick': (el) => pickScan(el.dataset.type, Number(el.dataset.id), el.dataset.open),
+  'scan-manual': () => openAdd(scan.kindHint, scan.query.trim()),
+  rescan: () => rescan(),
   'dlg-close': () => closeDialog(),
   'confirm-yes': () => {
     const resolve = confirmResolve;
@@ -1213,6 +1384,7 @@ document.addEventListener('input', (e) => {
     listTimer = setTimeout(requestRender, 80);
     return;
   }
+  if (el.id === 'scan-q') { scanTyped(el.value); return; }
   if (el.id === 'add-title') { checkDuplicate(el.value); formError('add-error', ''); return; }
   if (el.dataset.setting === 'accent') { applyTheme(el.value); return; }
   const t = cur();
@@ -1287,6 +1459,7 @@ document.addEventListener('change', (e) => {
 });
 
 const forms = {
+  'scan-search': () => { clearTimeout(scan.timer); runSearch(); },
   add: submitAdd,
   edit: submitEdit,
   'add-season': addSeason,
@@ -1304,6 +1477,20 @@ document.addEventListener('submit', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
+  // Escape closes the dialog in one press, even from a search box (which would otherwise just clear itself).
+  if (e.key === 'Escape' && dlg.open && !e.defaultPrevented) {
+    e.preventDefault();
+    closeDialog();
+    return;
+  }
+  if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && dlg.open && e.target && (e.target.id === 'scan-q' || e.target.classList.contains('scan-item'))) {
+    const items = [...dlg.querySelectorAll('.scan-item')];
+    if (!items.length) return;
+    const at = items.indexOf(e.target);
+    const next = e.key === 'ArrowDown' ? items[Math.min(items.length - 1, at + 1)] : at <= 0 ? document.getElementById('scan-q') : items[at - 1];
+    if (next) { e.preventDefault(); next.focus(); }
+    return;
+  }
   if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey || dlg.open) return;
   const tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : '';
   if (['input', 'textarea', 'select'].includes(tag) || (e.target && e.target.isContentEditable)) return;
@@ -1321,7 +1508,7 @@ window.addEventListener('hashchange', onRoute);
 async function start() {
   state.standalone = window.matchMedia('(display-mode: standalone)').matches;
   applyTheme(M.DEFAULT_SETTINGS.accent);
-  state.route = parseRoute();
+  state.route = { name: 'boot' };
   try {
     const { titles, settings } = await store.loadAll();
     state.titles = titles.map(M.normalizeTitle);

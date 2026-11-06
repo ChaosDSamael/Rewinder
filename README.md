@@ -17,12 +17,12 @@ Des notes sur 10 (les étoiles se remplissent au dixième), des commentaires, le
 - De temps en temps : **Settings → Backup → Download backup**. Le fichier sert aussi à amener ta liste sur un autre ordi (**Restore a backup**).
 - Si tu effaces les données du site dans ton navigateur, la liste part avec. D'où les backups.
 
-## Le Scan (prochaine mise à jour)
+## Le Scan
 
-- Le Scan va chercher les infos sur le web : affiches, saisons, noms d'épisodes, acteurs, dates de sortie, où regarder au Canada.
-- Chaque personne utilise ses propres clés gratuites : [TMDB](https://www.themoviedb.org/settings/api) pour les films, séries et animes, [RAWG](https://rawg.io/apidocs) pour les jeux. Les clés restent dans ton navigateur et ne vont jamais dans les backups.
-- Le formulaire de clé TMDB demande une adresse et un numéro de téléphone.
-- Sans clé, tout marche à la main.
+- Le bouton **Scan** cherche sur TMDB : affiche, saisons, noms d'épisodes, dates de sortie, acteurs, titre québécois, où regarder au Canada.
+- Chaque personne met sa propre clé gratuite dans **Settings** : [TMDB](https://www.themoviedb.org/settings/api) pour les films, séries et animes. La clé reste dans ton navigateur et ne va jamais dans les backups. Le formulaire de TMDB demande une adresse et un numéro de téléphone.
+- Sur une fiche faite à la main, **Scan** la relie à TMDB. Ensuite, **Rescan** la met à jour (nouveaux épisodes, dates, plateformes). Tes notes, tes épisodes cochés et tes commentaires restent.
+- Les jeux ([RAWG](https://rawg.io/apidocs)) arrivent à la prochaine mise à jour. Sans clé, tout marche à la main.
 
 ## Crédits
 

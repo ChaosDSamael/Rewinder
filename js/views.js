@@ -38,7 +38,11 @@ export const footer = () => `<footer class="foot"><span>Rewinder · v${M.APP_VER
 function cardMeta(t) {
   if (M.hasEpisodes(t) && t.status === 'progress') {
     const nx = M.nextEpisode(t);
-    if (nx) return `Next ${M.epCode(nx.season.n, nx.ep.n)}`;
+    if (nx) {
+      const code = M.epCode(nx.season.n, nx.ep.n);
+      if (M.isAired(nx.ep)) return `Next ${code}`;
+      return nx.ep.tba ? `${code} · date TBA` : `${code} · ${M.fmtDate(nx.ep.aired)}`;
+    }
   }
   const score = M.effectiveScore(t);
   const bits = [];
@@ -88,7 +92,7 @@ function segments(t, nx) {
     const p = M.progress(t);
     return `<span class="bar-lg" aria-hidden="true"><span style="width:${Math.round((p.watched / p.total) * 100)}%"></span></span>`;
   }
-  return `<div class="segs" aria-hidden="true" style="--n:${list.length}">${list.map((x) => `<span class="${x.ep.watched ? 'w' : nx && x.ep === nx.ep ? 'nx' : ''}"></span>`).join('')}</div>`;
+  return `<div class="segs" aria-hidden="true" style="--n:${list.length}">${list.map((x) => `<span class="${x.ep.watched ? 'w' : nx && x.ep === nx.ep ? 'nx' : M.isAired(x.ep) ? '' : 'f'}"></span>`).join('')}</div>`;
 }
 
 function heroContinue(t, state) {
@@ -151,7 +155,11 @@ function rowSection(row) {
 }
 
 function pickHero(all) {
-  return all.filter((t) => M.hasEpisodes(t) && t.status === 'progress' && M.nextEpisode(t)).sort(byActivity)[0] || null;
+  return all.filter((t) => {
+    if (!M.hasEpisodes(t) || t.status !== 'progress') return false;
+    const nx = M.nextEpisode(t);
+    return Boolean(nx && M.isAired(nx.ep));
+  }).sort(byActivity)[0] || null;
 }
 
 export function homeView(state) {
@@ -262,11 +270,12 @@ function episodeRow(t, s, e, nx, openEp) {
   const open = openEp === `${t.id}:${k}`;
   const code = M.epCode(s.n, e.n);
   const isNext = Boolean(nx && nx.ep === e);
-  return `<li class="ep${e.watched ? ' watched' : ''}${open ? ' open' : ''}${isNext ? ' next' : ''}" data-key="e-${id}">
+  const air = M.airLabel(e);
+  return `<li class="ep${e.watched ? ' watched' : ''}${open ? ' open' : ''}${isNext ? ' next' : ''}${M.isAired(e) ? '' : ' upcoming'}" data-key="e-${id}">
 <div class="ep-row">
 <input type="checkbox" id="chk-${id}" data-ep-check="${k}"${e.watched ? ' checked' : ''} aria-label="Watched ${code}">
 <button type="button" class="ep-main" id="ep-${id}" data-action="ep-toggle" data-ep="${k}" aria-expanded="${open}" title="Rate, add a note, edit">
-<span class="ep-code">E${M.pad2(e.n)}</span><span class="ep-title" data-ep-label="${k}">${esc(e.title || `Episode ${e.n}`)}</span>${e.note ? `<span class="ep-note-mark" title="Has a note">${icon.note}</span>` : ''}${e.aired ? `<span class="ep-aired">Aired ${esc(M.fmtDate(e.aired, true))}</span>` : ''}
+<span class="ep-code">E${M.pad2(e.n)}</span><span class="ep-title" data-ep-label="${k}">${esc(e.title || `Episode ${e.n}`)}</span>${e.note ? `<span class="ep-note-mark" title="Has a note">${icon.note}</span>` : ''}${air ? `<span class="ep-aired">${esc(air)}</span>` : ''}
 </button>
 ${isNext ? '<span class="tag-acc">NEXT</span>' : ''}
 <span class="ep-date">${e.watched ? `${icon.checkSm}${esc(M.fmtDate(e.watched))}` : ''}</span>
@@ -379,7 +388,7 @@ function providersPanel(t, state) {
 ${t.providers.length ? `<div class="chips">${t.providers.map((p) => `<span class="chip-x"><span class="chip-x-label">${esc(p.name)}</span><button type="button" class="x-btn" data-action="prov-remove" data-name="${esc(p.name)}" aria-label="Remove ${esc(p.name)}">${icon.x}</button></span>`).join('')}</div>` : ''}
 <form class="inline-form" data-form="prov-add" autocomplete="off"><label class="sr" for="prov-input">Add a platform</label><input id="prov-input" name="name" class="input input-sm" list="prov-list" placeholder="${game ? 'Steam, PS Store…' : 'Netflix, Crave…'}" maxlength="60" data-keep><button type="submit" class="btn btn-dashed btn-sm">${icon.plus}Add</button></form>
 <datalist id="prov-list">${options(known)}</datalist>
-${t.providers.some((p) => p.source === 'tmdb') ? '<p class="credit">Streaming data: JustWatch</p>' : ''}
+${t.providers.some((p) => p.source === 'tmdb') || t.watchLink ? `<p class="credit">Streaming data: JustWatch${t.watchLink ? ` · <a class="watch-link" href="${esc(t.watchLink)}" target="_blank" rel="noopener">See offers ↗</a>` : ''}</p>` : ''}
 </section>`;
 }
 
@@ -422,6 +431,11 @@ export function historyPanel(entries) {
   return `<section class="panel" id="history-panel" aria-labelledby="h-history"><h2 class="panel-title" id="h-history">History</h2>${body}</section>`;
 }
 
+function scanButton(t, state) {
+  if (state.ui.rescanning === t.id) return `<button type="button" class="btn btn-line" disabled>${icon.radar}Scanning…</button>`;
+  return `<button type="button" class="btn btn-line" data-action="rescan" title="${t.tmdbId ? 'Refresh from TMDB: new episodes, dates, where to watch' : 'Find it on TMDB and fill in the rest'}">${icon.radar}${t.tmdbId ? 'Rescan' : 'Scan'}</button>`;
+}
+
 export function titleView(state, t) {
   const series = M.hasEpisodes(t);
   const p = M.progress(t);
@@ -450,6 +464,7 @@ ${t.overview ? `<p class="overview">${esc(t.overview)}</p>` : ''}
 ${watchAction(t)}
 <button type="button" class="icon-btn fav-btn" data-action="fav" aria-pressed="${t.fav}" aria-label="Favorite" title="${t.fav ? 'In your favorites' : 'Add to favorites'}">${t.fav ? icon.heartOn : icon.heart}</button>
 <button type="button" class="btn btn-ghost" data-action="edit">${icon.edit}Edit</button>
+${t.kind === 'game' ? '' : scanButton(t, state)}
 </div>
 </div>
 </section>
@@ -459,7 +474,7 @@ ${series ? seasonsSection(t, state) : ''}${t.kind === 'game' ? gameSection(t) : 
 </div>
 <aside class="col-aside" aria-label="Details">
 ${providersPanel(t, state)}${viaPanel(t, state)}${t.kind === 'game' ? '' : viewsPanel(t)}${tagsPanel(t, state)}${historyPanel(state.history[t.id])}
-<div class="aside-foot"><span>Added ${esc(M.fmtDate(t.createdAt, true))}</span><button type="button" class="btn btn-ghost btn-sm btn-danger" data-action="trash">${icon.trash}Move to trash</button></div>
+<div class="aside-foot"><span>Added ${esc(M.fmtDate(t.createdAt, true))}${t.scannedAt ? ` · scanned ${esc(M.fmtDate(t.scannedAt))}` : ''}</span><button type="button" class="btn btn-ghost btn-sm btn-danger" data-action="trash">${icon.trash}Move to trash</button></div>
 </aside>
 </div>
 </div>
@@ -499,7 +514,7 @@ export function settingsView(state) {
 
 <section class="set-sec" aria-labelledby="set-keys"><h2 class="h2" id="set-keys"><span class="sq" aria-hidden="true"></span>Web search keys</h2>
 <p class="set-text">The Scan uses free keys from TMDB (movies, TV shows, anime) and RAWG (games). Each person uses their own. Keys stay in this browser and never go into backups. Without keys, everything still works by hand.</p>
-<p class="set-text dim">The Scan arrives in the next update. You can already paste your keys here.</p>
+<p class="set-text dim">Game search (RAWG) arrives in the next update. You can already paste that key too.</p>
 ${keyField('tmdbKey', 'TMDB key', 'API key or API read access token', 'https://www.themoviedb.org/settings/api', s.tmdbKey)}
 ${keyField('rawgKey', 'RAWG key', 'API key', 'https://rawg.io/apidocs', s.rawgKey)}
 </section>
@@ -542,12 +557,17 @@ export const errorView = (message) => `<div class="page"><div class="empty-box">
 
 const kindPicker = (selected) => `<fieldset class="seg"><legend class="label">Category</legend><div class="seg-opts">${M.KINDS.map((k) => `<label class="seg-opt"><input type="radio" name="kind" value="${k}"${k === selected ? ' checked' : ''}><span>${M.KIND_LABEL[k]}</span></label>`).join('')}</div></fieldset>`;
 
-export function addDialog(kind) {
+export function addDialog(kind, { title = '', noKey = false } = {}) {
+  const note = noKey
+    ? 'Tip: add your TMDB key in Settings and the Scan fills in posters, episodes and cast for you.'
+    : kind === 'game'
+      ? 'Game search (RAWG) arrives in the next update. For now, games go in by hand.'
+      : 'Add it by hand. Later, Scan on its page can fill in the rest.';
   return `<form class="dlg-form" data-form="add" novalidate autocomplete="off">
 <div class="dlg-head"><span class="eyebrow">// Manual add</span><h2 class="dlg-title" id="dlg-title">Add a title</h2></div>
-<p class="dlg-note">The web scan (posters, episodes, cast) arrives in the next update. For now, fill it in by hand.</p>
+<p class="dlg-note">${esc(note)}</p>
 ${kindPicker(M.KINDS.includes(kind) ? kind : 'movie')}
-<label class="field"><span class="label">Title</span><input id="add-title" class="input" name="title" maxlength="300" required></label>
+<label class="field"><span class="label">Title</span><input id="add-title" class="input" name="title" maxlength="300" value="${esc(title)}" required></label>
 <p class="dup" id="add-dup" hidden></p>
 <div class="field-row">
 <label class="field"><span class="label">Year <span class="opt">optional</span></span><input class="input" name="year" type="number" min="1870" max="2100" placeholder="2024"></label>
@@ -585,5 +605,37 @@ export function confirmDialog({ title, body, yes = 'Confirm', danger = false }) 
 <div class="dlg-head"><h2 class="dlg-title" id="dlg-title">${esc(title)}</h2></div>
 <p class="dlg-text">${esc(body)}</p>
 <div class="dlg-actions"><button type="button" class="btn btn-ghost" data-action="confirm-no">Cancel</button><button type="button" class="btn ${danger ? 'btn-danger-solid' : 'btn-primary'}" data-action="confirm-yes">${esc(yes)}</button></div>
+</div>`;
+}
+
+/* ---------- scan ---------- */
+
+export function scanResults(scan, titles) {
+  if (scan.busy) return `<div class="scan-wait"><span class="scan-line" aria-hidden="true"></span>${icon.radar}<span>${esc(scan.busy)}</span></div>`;
+  if (scan.error) return `<p class="dlg-error scan-msg">${esc(scan.error)}</p>`;
+  if (scan.loading) return '<p class="scan-hint">Searching TMDB…</p>';
+  if (scan.query.trim().length < 2) return '<p class="scan-hint">Type a title. Results come from TMDB.</p>';
+  if (!scan.results.length) return `<p class="scan-hint">Nothing found on TMDB.${scan.mode === 'link' ? ' Try another spelling.' : ' Try another spelling, or add it by hand.'}</p>`;
+  return `<ul class="scan-list">${scan.results.map((r) => {
+    const mine = titles.find((t) => t.tmdbId === r.id && t.tmdbType === r.type && !t.deletedAt && t.id !== scan.linkId);
+    const sub = [M.KIND_LABEL[r.kind], r.year, r.original].filter(Boolean).join(' · ');
+    return `<li><button type="button" class="scan-item" data-action="scan-pick" data-type="${r.type}" data-id="${r.id}"${mine ? ` data-open="${esc(mine.id)}"` : ''}>
+<span class="scan-thumb" style="background:${M.artFor({ title: r.title })}" aria-hidden="true">${r.poster ? `<img src="${esc(r.poster)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}</span>
+<span class="scan-info"><span class="scan-title">${esc(r.title)}</span><span class="scan-sub">${esc(sub)}</span></span>${mine ? '<span class="tag-soft">In your list</span>' : ''}
+</button></li>`;
+  }).join('')}</ul>`;
+}
+
+export function scanDialog(scan, titles) {
+  const link = scan.mode === 'link';
+  return `<div class="dlg-form scan" data-scan>
+<div class="dlg-head"><span class="eyebrow">// Scan</span><h2 class="dlg-title" id="dlg-title">${link ? `Find ${esc(scan.linkTitle)}` : 'Add a title'}</h2></div>
+${link ? '<p class="dlg-note">Pick the right one: posters, episodes, dates and cast fill in. Your checks, scores and notes stay.</p>' : ''}
+<form class="scan-bar" data-form="scan-search" role="search" autocomplete="off">
+<div class="search scan-search">${icon.search}<label class="sr" for="scan-q">Search TMDB</label><input id="scan-q" type="search" name="q" value="${esc(scan.query)}" placeholder="Movie, TV show or anime" spellcheck="false"></div>
+${link ? '' : `<label class="sr" for="scan-status">Status</label><select id="scan-status" class="select" name="status">${M.STATUSES.map((s) => `<option value="${s}"${s === scan.status ? ' selected' : ''}>${M.STATUS_LABEL[s]}</option>`).join('')}</select>`}
+</form>
+<div class="scan-results" id="scan-results" aria-live="polite">${scanResults(scan, titles)}</div>
+<div class="dlg-actions scan-foot"><span class="scan-credit">Search by TMDB</span><span class="actions">${link ? '' : '<button type="button" class="btn btn-dashed" data-action="scan-manual">Add it by hand</button>'}<button type="button" class="btn btn-ghost" data-action="dlg-close">Close</button></span></div>
 </div>`;
 }

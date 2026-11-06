@@ -1,6 +1,6 @@
 // Rewinder — data helpers. Pure functions: no DOM, no storage.
 
-export const APP_VERSION = '1.0.0';
+export const APP_VERSION = '1.1.0';
 
 export const KINDS = ['movie', 'tv', 'anime', 'game'];
 export const KIND_LABEL = { movie: 'Movie', tv: 'TV Show', anime: 'Anime', game: 'Game' };
@@ -97,6 +97,15 @@ export function progress(t) {
 
 export const nextEpisode = (t) => episodes(t).find((x) => !x.ep.watched) || null;
 
+// An episode is out once its air date has passed. A scanned episode with no date yet is not.
+export const isAired = (e) => !e.tba && (!e.aired || e.aired <= today());
+
+export function airLabel(e) {
+  if (e.tba) return 'Date TBA';
+  if (!e.aired) return '';
+  return `${e.aired > today() ? 'Airs' : 'Aired'} ${fmtDate(e.aired, true)}`;
+}
+
 export function findSeason(t, sn) {
   return t ? (t.seasons || []).find((x) => x.n === Number(sn)) || null : null;
 }
@@ -151,13 +160,14 @@ export function newTitle(fields = {}) {
     poster: '', backdrop: '', status: 'watchlist', fav: false, score: null, notes: '',
     tags: [], via: '', views: [], platforms: [], game: { story: null, full: null },
     seasons: [], cast: [], providers: [], newSeason: null,
+    tmdbId: null, tmdbType: '', watchLink: '', scannedAt: null,
     createdAt: now, updatedAt: now, lastActivity: now, deletedAt: null,
     ...fields
   };
 }
 
 export function makeEpisode(n) {
-  return { n, title: '', aired: '', watched: null, score: null, note: '' };
+  return { n, title: '', aired: '', tba: false, watched: null, score: null, note: '' };
 }
 
 export function makeSeason(n, count) {
@@ -166,7 +176,8 @@ export function makeSeason(n, count) {
   return { n, year: '', score: null, notes: '', episodes: list };
 }
 
-const isHttp = (v) => typeof v === 'string' && /^https:\/\//i.test(v);
+// Pictures only from the services the Scan uses.
+const isImage = (v) => typeof v === 'string' && /^https:\/\/(image\.tmdb\.org|media\.rawg\.io)\/[\w./%-]+$/.test(v);
 const strList = (v, max = 50) => (Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean).slice(0, max) : []);
 const dayOrNull = (v) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
 const markDate = (v) => (typeof v === 'string' ? dayOrNull(v) : v ? today() : null);
@@ -185,8 +196,8 @@ export function normalizeTitle(raw) {
     year: Number.isInteger(year) && year > 1800 && year < 2200 ? year : null,
     genres: strList(r.genres, 12),
     overview: String(r.overview || '').slice(0, 4000),
-    poster: isHttp(r.poster) ? r.poster : '',
-    backdrop: isHttp(r.backdrop) ? r.backdrop : '',
+    poster: isImage(r.poster) ? r.poster : '',
+    backdrop: isImage(r.backdrop) ? r.backdrop : '',
     status: STATUSES.includes(r.status) ? r.status : 'watchlist',
     fav: Boolean(r.fav),
     score: typeof r.score === 'number' ? clampScore(r.score) : null,
@@ -205,6 +216,7 @@ export function normalizeTitle(raw) {
         n: Number.isInteger(Number(e && e.n)) ? Number(e.n) : j + 1,
         title: String((e && e.title) || '').slice(0, 300),
         aired: dayOrNull(e && e.aired) || '',
+        tba: Boolean(e && e.tba),
         watched: dayOrNull(e && e.watched),
         score: e && typeof e.score === 'number' ? clampScore(e.score) : null,
         note: String((e && e.note) || '').slice(0, 10000)
@@ -213,6 +225,10 @@ export function normalizeTitle(raw) {
     cast: Array.isArray(r.cast) ? r.cast.filter((c) => c && c.name).slice(0, 40).map((c) => ({ name: String(c.name).slice(0, 120), role: String(c.role || '').slice(0, 120) })) : [],
     providers: Array.isArray(r.providers) ? r.providers.filter((p) => p && p.name).slice(0, 30).map((p) => ({ name: String(p.name).slice(0, 60), source: p.source === 'tmdb' ? 'tmdb' : 'manual' })) : [],
     newSeason: Number.isInteger(r.newSeason) ? r.newSeason : null,
+    tmdbId: Number.isInteger(r.tmdbId) && r.tmdbId > 0 ? r.tmdbId : null,
+    tmdbType: r.tmdbType === 'movie' || r.tmdbType === 'tv' ? r.tmdbType : '',
+    watchLink: typeof r.watchLink === 'string' && r.watchLink.startsWith('https://www.themoviedb.org/') ? r.watchLink : '',
+    scannedAt: r.scannedAt ? String(r.scannedAt) : null,
     createdAt: String(r.createdAt || base.createdAt),
     updatedAt: String(r.updatedAt || base.updatedAt),
     lastActivity: String(r.lastActivity || r.updatedAt || base.lastActivity),
@@ -309,3 +325,59 @@ export function onAccent(hex) {
 }
 
 export const isHexColor = (v) => /^#[0-9a-f]{6}$/i.test(String(v || ''));
+
+const episodeHasData = (e) => Boolean(e.watched || typeof e.score === 'number' || e.note);
+const seasonHasData = (s) => Boolean(typeof s.score === 'number' || s.notes || s.episodes.some(episodeHasData));
+
+// Pours a Scan into a title. Your own things stay: status, scores, notes, checks, tags, friends, your platforms.
+// Seasons and episodes made by hand that TMDB doesn't know are dropped, unless you put something in them.
+export function mergeScan(t, s) {
+  const counts = { seasons: 0, episodes: 0 };
+  t.tmdbId = s.tmdbId;
+  t.tmdbType = s.tmdbType;
+  t.scannedAt = new Date().toISOString();
+  if (s.tmdbType === 'tv' && t.kind === 'movie') t.kind = s.kind;
+  if (s.tmdbType === 'movie' && hasEpisodes(t)) t.kind = 'movie';
+  t.title = s.title || t.title;
+  t.titleQc = s.titleQc;
+  t.year = s.year || t.year;
+  if (s.genres.length) t.genres = s.genres;
+  if (s.overview) t.overview = s.overview;
+  if (s.poster) t.poster = s.poster;
+  if (s.backdrop) t.backdrop = s.backdrop;
+  if (s.cast.length) t.cast = s.cast;
+  t.watchLink = s.watchLink || '';
+  const scanned = s.providers.map((name) => ({ name, source: 'tmdb' }));
+  const mine = t.providers.filter((p) => p.source !== 'tmdb' && !s.providers.some((n) => n.toLowerCase() === p.name.toLowerCase()));
+  t.providers = [...scanned, ...mine];
+  if (!s.seasons) return counts;
+  for (const ss of s.seasons) {
+    let season = findSeason(t, ss.n);
+    if (!season) {
+      season = { n: ss.n, year: '', score: null, notes: '', episodes: [] };
+      t.seasons.push(season);
+      counts.seasons++;
+    }
+    season.year = ss.year || season.year;
+    for (const se of ss.episodes) {
+      let ep = season.episodes.find((e) => e.n === se.n);
+      if (!ep) {
+        ep = makeEpisode(se.n);
+        season.episodes.push(ep);
+        counts.episodes++;
+      }
+      if (se.title) ep.title = se.title;
+      ep.aired = se.aired;
+      ep.tba = se.tba;
+    }
+    season.episodes.sort((a, b) => a.n - b.n);
+  }
+  const known = new Map(s.seasons.map((ss) => [ss.n, new Set(ss.episodes.map((e) => e.n))]));
+  t.seasons = t.seasons.filter((season) => known.has(season.n) || seasonHasData(season));
+  for (const season of t.seasons) {
+    const set = known.get(season.n);
+    if (set) season.episodes = season.episodes.filter((e) => set.has(e.n) || episodeHasData(e));
+  }
+  t.seasons.sort((a, b) => a.n - b.n);
+  return counts;
+}
