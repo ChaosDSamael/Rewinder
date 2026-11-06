@@ -1,0 +1,17 @@
+{
+  "id": "./",
+  "name": "Rewinder",
+  "short_name": "Rewinder",
+  "description": "Your movies, TV shows, anime and games: rated, tracked, remembered.",
+  "lang": "en",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0D0F0F",
+  "theme_color": "#0D0F0F",
+  "categories": ["entertainment", "lifestyle"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

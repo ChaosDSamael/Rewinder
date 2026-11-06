@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rewinder</title>
+<meta name="description" content="Your movies, TV shows, anime and games: rated, tracked, remembered.">
+<meta name="theme-color" content="#0D0F0F">
+<meta name="color-scheme" content="dark">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="icon" href="icons/icon-192.png" sizes="192x192" type="image/png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="preload" href="fonts/chakra-petch-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/inter-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="css/app.css">
+<script type="module" src="js/app.js"></script>
+</head>
+<body>
+<button type="button" class="skip" data-action="skip">Skip to content</button>
+<div id="root" class="app">
+<noscript><p class="noscript">Rewinder needs JavaScript to run.</p></noscript>
+<div class="boot" aria-hidden="true"><img src="icons/logo-64.png" alt="" width="48" height="48"></div>
+</div>
+<dialog id="dlg" class="dlg" aria-labelledby="dlg-title"></dialog>
+<div id="toasts" class="toasts" aria-live="polite"></div>
+<input type="file" id="import-file" accept="application/json,.json" hidden>
+</body>
+</html>
