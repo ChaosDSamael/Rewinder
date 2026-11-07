@@ -1,6 +1,6 @@
 // Rewinder — data helpers. Pure functions: no DOM, no storage.
 
-export const APP_VERSION = '1.8.0';
+export const APP_VERSION = '1.8.1';
 
 export const KINDS = ['movie', 'tv', 'anime', 'game'];
 export const KIND_LABEL = { movie: 'Movie', tv: 'TV Show', anime: 'Anime', game: 'Game' };
@@ -304,21 +304,31 @@ export const studiosOf = (t) => (t.kind === 'game' ? (t.makers || []).filter((x)
 const releaseKey = (t) => t.released || (t.year ? `${t.year}-99` : '9999');
 
 // Franchises (TMDB collections, movies) or studios: each group in release order, the best average first.
+// Companies credited on exactly the same titles make one group: a show is often credited to four or five of them.
+// The one credited first (TMDB's order) leads; the others are listed under it.
 export function groupTitles(list, by, sort = 'score') {
   const map = new Map();
   for (const t of list) {
     const keys = by === 'studio' ? studiosOf(t) : t.franchise ? [t.franchise.name] : [];
-    for (const name of keys) {
+    for (const name of new Set(keys)) {
       if (!map.has(name)) map.set(name, []);
       map.get(name).push(t);
     }
   }
-  const groups = [...map.entries()]
-    .filter(([, items]) => by !== 'studio' || items.length >= 2)
-    .map(([name, items]) => {
+  const same = new Map();
+  for (const [name, items] of map) {
+    if (by === 'studio' && items.length < 2) continue;
+    const key = items.map((t) => t.id).sort().join(' ');
+    if (same.has(key)) same.get(key).names.push(name);
+    else same.set(key, { names: [name], items });
+  }
+  const credit = (name, items) => (by === 'studio' ? items.reduce((n, t) => n + studiosOf(t).indexOf(name), 0) : 0);
+  const groups = [...same.values()]
+    .map(({ names, items }) => {
+      names.sort((a, b) => credit(a, items) - credit(b, items) || a.localeCompare(b, 'en', { sensitivity: 'base' }));
       items.sort((a, b) => releaseKey(a).localeCompare(releaseKey(b)) || a.title.localeCompare(b.title));
       const scores = items.map(effectiveScore).filter((v) => v !== null);
-      return { name, items, rated: scores.length, avg: scores.length ? Math.round((scores.reduce((x, y) => x + y, 0) / scores.length) * 10) / 10 : null };
+      return { name: names[0], also: names.slice(1), items, rated: scores.length, avg: scores.length ? Math.round((scores.reduce((x, y) => x + y, 0) / scores.length) * 10) / 10 : null };
     });
   if (sort === 'count') groups.sort((a, b) => b.items.length - a.items.length || a.name.localeCompare(b.name));
   else if (sort === 'name') groups.sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));

@@ -337,7 +337,7 @@ function groupBody(state, list, every) {
     return `${note}<div class="empty-box"><p class="lead">${by === 'studio' ? 'No studio with two titles here yet.' : 'No franchise here yet.'}</p><p class="set-text dim">${by === 'studio' ? 'Studios come from TMDB, and from RAWG for games.' : 'Franchises come from TMDB and cover movies: Alien, Scream, Jurassic Park…'}</p></div>`;
   }
   return `${note}<div class="grp-list">${groups.map((g) => `<section class="grp" data-key="grp-${esc(by)}-${esc(g.name)}" aria-label="${esc(g.name)}">
-<div class="grp-head"><h2 class="h2"><span class="sq" aria-hidden="true"></span>${esc(g.name)}</h2><span class="grp-meta">${esc(plural(g.items.length, 'title'))}${g.avg !== null ? ` · <span class="grp-avg">★ ${g.avg.toFixed(1)}</span> average` : ' · not rated yet'}</span></div>
+<div class="grp-head"><div class="grp-names"><h2 class="h2"><span class="sq" aria-hidden="true"></span>${esc(g.name)}</h2>${g.also.length ? `<p class="grp-also">Also credited: ${esc(g.also.join(', '))}</p>` : ''}</div><span class="grp-meta">${esc(plural(g.items.length, 'title'))}${g.avg !== null ? ` · <span class="grp-avg">★ ${g.avg.toFixed(1)}</span> average` : ' · not rated yet'}</span></div>
 <div class="wall wall-sm">${g.items.map((t, i) => card(t, { kind: every, rank: by === 'franchise' ? i + 1 : 0 })).join('')}</div>
 </section>`).join('')}</div>
 ${loose ? `<p class="grp-note dim">${esc(plural(loose, 'title'))} here ${loose === 1 ? 'is' : 'are'} not part of ${by === 'studio' ? 'a studio with two titles' : 'a franchise'}.</p>` : ''}`;

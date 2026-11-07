@@ -1056,6 +1056,8 @@ a.bat-title:hover { color: var(--accent); }
 .grp { display: flex; flex-direction: column; gap: 16px; }
 .grp-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 18px; padding-bottom: 10px; border-bottom: 1px solid var(--line-2); }
 .grp-head .h2 { margin: 0; }
+.grp-names { min-width: 0; }
+.grp-also { margin: 6px 0 0 18px; font-size: 13px; line-height: 1.45; color: var(--muted); }
 .grp-meta { font-family: var(--mono); font-size: 12px; letter-spacing: .04em; color: var(--muted); }
 .grp-avg { color: var(--accent); }
 .grp-note { display: flex; align-items: center; gap: 10px; margin: 0; font-size: 13px; color: var(--text-2); }
