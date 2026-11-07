@@ -1,6 +1,6 @@
 // Rewinder — data helpers. Pure functions: no DOM, no storage.
 
-export const APP_VERSION = '1.4.2';
+export const APP_VERSION = '1.4.3';
 
 export const KINDS = ['movie', 'tv', 'anime', 'game'];
 export const KIND_LABEL = { movie: 'Movie', tv: 'TV Show', anime: 'Anime', game: 'Game' };
@@ -231,11 +231,14 @@ export function normalizeTitle(raw) {
       })) : []
     })).sort((a, b) => a.n - b.n) : [],
     cast: Array.isArray(r.cast) ? r.cast.filter((c) => c && c.name).slice(0, 40).map((c) => ({ name: String(c.name).slice(0, 120), role: String(c.role || '').slice(0, 120) })) : [],
-    providers: Array.isArray(r.providers) ? r.providers.filter((p) => p && p.name).slice(0, 30).map((p) => ({
-      name: String(p.name).slice(0, 60),
-      source: ['tmdb', 'rawg'].includes(p.source) ? p.source : 'manual',
-      url: typeof p.url === 'string' && /^https:\/\/[\w.-]+\.[a-z]{2,}\//i.test(p.url) ? p.url.slice(0, 500) : ''
-    })) : [],
+    providers: Array.isArray(r.providers) ? r.providers.filter((p) => p && p.name).slice(0, 30).map((p) => {
+      const source = ['tmdb', 'rawg'].includes(p.source) ? p.source : 'manual';
+      return {
+        name: (source === 'tmdb' ? cleanProvider(p.name) : String(p.name)).slice(0, 60),
+        source,
+        url: typeof p.url === 'string' && /^https:\/\/[\w.-]+\.[a-z]{2,}\//i.test(p.url) ? p.url.slice(0, 500) : ''
+      };
+    }).filter((p, i, all) => p.name && all.findIndex((q) => q.name.toLowerCase() === p.name.toLowerCase()) === i) : [],
     newSeason: Number.isInteger(r.newSeason) ? r.newSeason : null,
     tmdbId: Number.isInteger(r.tmdbId) && r.tmdbId > 0 ? r.tmdbId : null,
     tmdbType: r.tmdbType === 'movie' || r.tmdbType === 'tv' ? r.tmdbType : '',
@@ -280,6 +283,19 @@ export function heroArt(t, hue) {
   const h = typeof hue === 'number' ? hue : hashHue(t.title || t.id);
   const h2 = typeof hue === 'number' ? hue + 12 : nextHue(t.title || t.id);
   return `repeating-linear-gradient(176deg, rgba(255,255,255,.025) 0 2px, transparent 2px 16px), radial-gradient(70% 90% at 78% 28%, hsl(${h} 48% 52% / .55) 0%, transparent 60%), radial-gradient(60% 55% at 62% 92%, hsl(${h2} 55% 30% / .65) 0%, transparent 70%), linear-gradient(180deg, hsl(${h} 50% 14%) 0%, hsl(${h} 46% 9%) 55%, hsl(${h} 40% 5%) 100%)`;
+}
+
+// "Paramount Plus Premium" and "Paramount+ Amazon Channel" are the same service: one name per service.
+export function cleanProvider(name) {
+  let n = String(name || '').trim()
+    .replace(/\s+(Basic|Standard)?\s*with Ads$/i, '')
+    .replace(/\s+(Premium|Essential|Basic|Standard|Ad[- ]Free)$/i, '')
+    .replace(/\s+(Amazon|Apple TV|Roku Premium)\s+Channel$/i, '')
+    .replace(/ Plus$/, '+')
+    .trim();
+  if (/^Amazon Prime Video/i.test(n)) n = 'Prime Video';
+  if (/^Netflix/i.test(n)) n = 'Netflix';
+  return n;
 }
 
 export const platformsOf = (t) => [...(t.providers || []).map((p) => p.name), ...(t.kind === 'game' ? t.platforms || [] : [])];

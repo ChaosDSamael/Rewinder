@@ -1,4 +1,5 @@
 // Rewinder — the Scan. Talks to TMDB straight from your browser, with your own key.
+import { cleanProvider } from './model.js';
 
 const API = 'https://api.themoviedb.org/3';
 const IMG = 'https://image.tmdb.org/t/p/';
@@ -66,18 +67,6 @@ function quebecTitle(d, type, main) {
   const qc = list.find((t) => t && t.iso_639_1 === 'fr' && t.iso_3166_1 === 'CA');
   const name = qc && qc.data ? String((type === 'movie' ? qc.data.title : qc.data.name) || '').trim() : '';
   return name && name.toLowerCase() !== main.toLowerCase() ? name : '';
-}
-
-// "Paramount Plus" and "Paramount+ Amazon Channel" are the same subscription: one name per service.
-export function cleanProvider(name) {
-  let n = String(name || '').trim()
-    .replace(/\s+(Basic|Standard)?\s*with Ads$/i, '')
-    .replace(/\s+(Amazon|Apple TV|Roku Premium)\s+Channel$/i, '')
-    .replace(/ Plus$/, '+')
-    .trim();
-  if (/^Amazon Prime Video/i.test(n)) n = 'Prime Video';
-  if (/^Netflix/i.test(n)) n = 'Netflix';
-  return n;
 }
 
 // Where to watch in Canada: subscription, free and with-ads services (data by JustWatch).
