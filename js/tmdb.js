@@ -53,7 +53,18 @@ const franchiseOf = (d) => (d.belongs_to_collection && Number.isInteger(d.belong
   ? { id: d.belongs_to_collection.id, name: String(d.belongs_to_collection.name).replace(/\s+Collection$/i, '').trim() }
   : null);
 const studioNames = (d) => (d.production_companies || []).map((c) => c && c.name).filter(Boolean).slice(0, 8);
-const groupsOf = (d, movie) => ({ franchise: movie ? franchiseOf(d) : null, studios: studioNames(d), released: dayOf(movie ? d.release_date : d.first_air_date), groupsAt: new Date().toISOString() });
+// Keywords: TMDB's tags on a title (vampire, heist, time loop…). Movies list them under "keywords", shows under "results".
+// The two "stinger" tags only say there's a scene after the credits: left out.
+const STINGERS = new Set(['duringcreditsstinger', 'aftercreditsstinger']);
+function keywordsOf(d) {
+  const k = d.keywords || {};
+  const raw = Array.isArray(k.keywords) ? k.keywords : Array.isArray(k.results) ? k.results : [];
+  return [...new Set(raw.map((x) => String((x && x.name) || '').toLowerCase().replace(/\s+/g, ' ').trim()).filter((w) => w && !STINGERS.has(w)))].slice(0, 80);
+}
+const groupsOf = (d, movie) => {
+  const at = new Date().toISOString();
+  return { franchise: movie ? franchiseOf(d) : null, studios: studioNames(d), released: dayOf(movie ? d.release_date : d.first_air_date), groupsAt: at, keywords: keywordsOf(d), keywordsAt: at };
+};
 
 // Original title when it's English or French; otherwise the English one (Attack on Titan, not Shingeki no Kyojin).
 function mainTitle(d, type) {
@@ -174,16 +185,16 @@ export async function fetchMakers(type, id, key) {
   return showMakers(d, await get(`/tv/${id}/aggregate_credits`, { language: 'en-US' }, key));
 }
 
-// For titles saved before 1.8: franchise, studios, release day. One light call.
+// For titles saved before 1.8 (franchise, studios, release day) or 1.9 (keywords). One light call.
 export async function fetchGroups(type, id, key) {
   const movie = type === 'movie';
-  return groupsOf(await get(`/${movie ? 'movie' : 'tv'}/${id}`, { language: 'en-US' }, key), movie);
+  return groupsOf(await get(`/${movie ? 'movie' : 'tv'}/${id}`, { language: 'en-US', append_to_response: 'keywords' }, key), movie);
 }
 
 // Everything about one title. Seasons come 20 at a time, the most TMDB allows per request.
 export async function fetchTitle(type, id, key, onStep) {
   if (type === 'movie') {
-    const d = await get(`/movie/${id}`, { language: 'en-US', append_to_response: 'credits,translations,watch/providers' }, key);
+    const d = await get(`/movie/${id}`, { language: 'en-US', append_to_response: 'credits,translations,watch/providers,keywords' }, key);
     const title = mainTitle(d, 'movie');
     const watch = watchCA(d['watch/providers']);
     return {
@@ -208,7 +219,7 @@ export async function fetchTitle(type, id, key, onStep) {
       seasons: null
     };
   }
-  const d = await get(`/tv/${id}`, { language: 'en-US', append_to_response: 'aggregate_credits,translations,watch/providers' }, key);
+  const d = await get(`/tv/${id}`, { language: 'en-US', append_to_response: 'aggregate_credits,translations,watch/providers,keywords' }, key);
   // Season 0 holds the specials: left out, like most trackers do. Add it by hand with + Season if you want it.
   const numbers = (d.seasons || []).map((s) => s && s.season_number).filter((n) => Number.isInteger(n) && n > 0);
   const seasons = [];

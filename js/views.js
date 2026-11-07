@@ -323,31 +323,70 @@ ${titleTable(rows, { q: f.q, emptyText: all.length ? 'No titles match. Try anoth
 }
 
 // One kind, or "all": every poster in one wall (the Full List is the table of everything).
-// Filters (status, genre, favorites) and a view by franchise or studio.
+// Filters (status, genre, favorites) and a view by groups: franchise, director, studio or your keywords.
+// The groups sit side by side like box sets on a shelf; a big one takes the whole line.
+const GROUP_WORD = { franchise: 'franchise', director: 'director', studio: 'studio', keyword: 'keyword' };
+export const groupBy = (state) => (GROUP_WORD[state.ui.group] ? state.ui.group : 'franchise');
+
+function keywordBar(state, list) {
+  const saved = M.savedKeywords(state.settings);
+  const draft = state.ui.kwDraft || '';
+  const typed = M.cleanKeyword(draft);
+  const ideas = M.suggestKeywords(list, draft, saved, typed ? 10 : 12);
+  const idea = (x) => `<button type="button" class="chip chip-sm kw-idea" data-action="kw-add" data-kw="${esc(x.word)}">${icon.plus}${esc(x.word)}<span class="chip-count">${x.count}</span></button>`;
+  const hint = typed && !ideas.length
+    ? `<p class="kw-hint">No keyword starts like “${esc(typed)}” here. Keywords are in English: vampire, gladiator, heist. Press Enter to keep it anyway.</p>`
+    : !typed && !saved.length
+      ? `<p class="kw-hint">${ideas.length ? 'Type a word, or start with one of these:' : 'Type a word: vampire, gladiator, heist… Every title that has it lands in one group.'}</p>`
+      : '';
+  return `<div class="kw-bar">
+<div class="kw-row">
+${saved.length ? `<div class="kw-saved" role="group" aria-label="Your keywords">${saved.map((k) => `<span class="chip-x kw-chip"><span class="chip-x-label">${esc(k)}</span><button type="button" class="x-btn" data-action="kw-remove" data-kw="${esc(k)}" aria-label="Remove the keyword ${esc(k)}">${icon.x}</button></span>`).join('')}</div>` : ''}
+<form class="kw-form" data-form="kw-add" autocomplete="off"><label class="sr" for="kw-input">Add a keyword</label><div class="search kw-search">${icon.plus}<input id="kw-input" name="kw" type="search" maxlength="60" placeholder="Add a keyword: vampire, heist, time loop…" value="${esc(draft)}" autocomplete="off" spellcheck="false" enterkeyhint="done"></div></form>
+</div>
+${hint}
+${ideas.length ? `<div class="kw-ideas" role="group" aria-label="${typed ? 'Keywords that match' : 'Ideas from your list'}">${ideas.map(idea).join('')}</div>` : ''}
+</div>`;
+}
+
 function groupBody(state, list, every) {
-  const by = state.ui.group === 'studio' ? 'studio' : 'franchise';
-  const groups = M.groupTitles(list, by, state.ui.groupSort);
+  const by = groupBy(state);
+  const saved = M.savedKeywords(state.settings);
+  const groups = M.groupTitles(list, by, state.ui.groupSort, saved);
   const fill = state.ui.groupFill;
-  const waiting = M.live(state.titles).filter((t) => t.tmdbId && t.tmdbType && !t.groupsAt).length;
+  const waiting = M.live(state.titles).filter((t) => t.tmdbId && t.tmdbType && (!t.groupsAt || !t.keywordsAt)).length;
   const note = fill
-    ? `<p class="grp-note"><span class="ping-inline" aria-hidden="true"></span>Looking up franchises and studios on TMDB… ${fill.done} of ${fill.total}</p>`
-    : waiting && !state.settings.tmdbKey ? '<p class="grp-note">Add your TMDB key in Settings: franchises and studios come from TMDB.</p>' : '';
-  const loose = list.filter((t) => (by === 'studio' ? !M.studiosOf(t).length : !t.franchise)).length;
+    ? `<p class="grp-note"><span class="ping-inline" aria-hidden="true"></span>Looking up franchises, studios and keywords… ${fill.done} of ${fill.total}</p>`
+    : waiting && !state.settings.tmdbKey ? '<p class="grp-note">Add your TMDB key in Settings: franchises, directors, studios and keywords come from TMDB.</p>' : '';
+  const bar = by === 'keyword' ? keywordBar(state, list) : '';
   if (!groups.length) {
-    return `${note}<div class="empty-box"><p class="lead">${by === 'studio' ? 'No studio with two titles here yet.' : 'No franchise here yet.'}</p><p class="set-text dim">${by === 'studio' ? 'Studios come from TMDB, and from RAWG for games.' : 'Franchises come from TMDB and cover movies: Alien, Scream, Jurassic Park…'}</p></div>`;
+    if (by === 'keyword') return `${note}${bar}`;
+    const empty = {
+      franchise: ['No franchise here yet.', 'Franchises come from TMDB and cover movies: Alien, Scream, Jurassic Park…'],
+      director: ['No director with two titles here yet.', 'Directors come from TMDB: who directed a movie, who created a show.'],
+      studio: ['No studio with two titles here yet.', 'Studios come from TMDB, and from RAWG for games.']
+    }[by];
+    return `${note}<div class="empty-box"><p class="lead">${empty[0]}</p><p class="set-text dim">${empty[1]}</p></div>`;
   }
-  return `${note}<div class="grp-list">${groups.map((g) => `<section class="grp" data-key="grp-${esc(by)}-${esc(g.name)}" aria-label="${esc(g.name)}">
-<div class="grp-head"><div class="grp-names"><h2 class="h2"><span class="sq" aria-hidden="true"></span>${esc(g.name)}</h2>${g.also.length ? `<p class="grp-also">Also credited: ${esc(g.also.join(', '))}</p>` : ''}</div><span class="grp-meta">${esc(plural(g.items.length, 'title'))}${g.avg !== null ? ` · <span class="grp-avg">★ ${g.avg.toFixed(1)}</span> average` : ' · not rated yet'}</span></div>
-<div class="wall wall-sm">${g.items.map((t, i) => card(t, { kind: every, rank: by === 'franchise' ? i + 1 : 0 })).join('')}</div>
+  const alsoLabel = by === 'director' ? 'With' : 'Also credited:';
+  const inGroups = new Set(groups.flatMap((g) => g.items.map((t) => t.id)));
+  const loose = by === 'keyword' ? 0 : list.filter((t) => !inGroups.has(t.id)).length;
+  const looseText = { franchise: 'not part of a franchise', director: 'not from a director with two titles', studio: 'not from a studio with two titles' }[by];
+  // Every label has the same lines, so the posters of groups side by side start at the same height.
+  const anyAlso = groups.some((g) => g.also.length);
+  const also = (g) => (g.also.length ? `<p class="grp-also" title="${esc(`${alsoLabel} ${g.also.join(', ')}`)}">${alsoLabel} ${esc(g.also.join(', '))}</p>` : anyAlso ? '<p class="grp-also" aria-hidden="true"></p>' : '');
+  return `${note}${bar}<div class="grp-list">${groups.map((g) => `<section class="grp${g.items.length ? '' : ' grp-empty'}" data-key="grp-${esc(by)}-${esc(g.name)}" aria-label="${esc(g.name)}">
+<div class="grp-head"><h2 class="h2 grp-name" title="${esc(g.name)}"><span class="sq" aria-hidden="true"></span><span class="grp-label">${esc(g.name)}</span></h2>${also(g)}<span class="grp-meta">${esc(plural(g.items.length, 'title'))}${g.avg !== null ? ` · <span class="grp-avg">★ ${g.avg.toFixed(1)}</span> average` : g.items.length ? ' · not rated yet' : ''}</span></div>
+${g.items.length ? `<div class="wall wall-sm">${g.items.map((t, i) => card(t, { kind: every, rank: by === 'franchise' ? i + 1 : 0 })).join('')}</div>` : '<p class="grp-none">Nothing here has this keyword yet.</p>'}
 </section>`).join('')}</div>
-${loose ? `<p class="grp-note dim">${esc(plural(loose, 'title'))} here ${loose === 1 ? 'is' : 'are'} not part of ${by === 'studio' ? 'a studio with two titles' : 'a franchise'}.</p>` : ''}`;
+${loose ? `<p class="grp-note dim">${esc(plural(loose, 'title'))} here ${loose === 1 ? 'is' : 'are'} ${looseText}.</p>` : ''}`;
 }
 
 export function browseView(state, kind) {
   const every = kind === 'all';
   const all = M.live(state.titles).filter((t) => every || t.kind === kind);
   const f = state.ui.browse;
-  const group = state.ui.group;
+  const group = state.ui.group ? groupBy(state) : '';
   const view = state.settings.browseView === 'list' ? 'list' : 'wall';
   const size = state.settings.wallSize === 'large' || state.settings.wallSize === 'small' ? state.settings.wallSize : state.ui.narrow ? 'large' : 'small';
   const shown = all.filter((t) => (!f.status || t.status === f.status) && (!f.genre || t.genres.includes(f.genre)) && (!f.fav || t.fav));
@@ -364,14 +403,14 @@ export function browseView(state, kind) {
   const chip = (href, label, current) => `<a class="kind-chip" href="${href}"${current ? ' aria-current="page"' : ''}>${label}</a>`;
   const tab = (g, label) => `<button type="button" class="grp-tab" data-action="browse-group" data-group="${g}" aria-pressed="${group === g}">${label}</button>`;
   const sortSelect = group
-    ? `<label class="sr" for="sort-group">Order the ${group === 'studio' ? 'studios' : 'franchises'}</label><select id="sort-group" class="select" data-filter="groupSort">${[['score', 'Best average'], ['count', 'Most titles'], ['name', 'A–Z']].map(([v, l]) => `<option value="${v}"${state.ui.groupSort === v ? ' selected' : ''}>${l}</option>`).join('')}</select>`
+    ? `<label class="sr" for="sort-group">Order the groups</label><select id="sort-group" class="select" data-filter="groupSort">${[['score', 'Best average'], ['count', 'Most titles'], ['name', 'A–Z']].map(([v, l]) => `<option value="${v}"${state.ui.groupSort === v ? ' selected' : ''}>${l}</option>`).join('')}</select>`
     : `<label class="sr" for="sort-browse">Sort by</label><select id="sort-browse" class="select" data-filter="browseSort">${sortOptions(state.ui.browseSort)}</select>`;
   return `<div class="page page-list${group || view === 'wall' ? ' page-wall' : ''}">
 <nav class="kind-chips" aria-label="Kinds">${chip('#/all', 'All', every)}${M.KINDS.map((k) => chip('#/' + M.KIND_PATH[k], M.KIND_TAB[k], kind === k)).join('')}</nav>
 <div class="page-head"><div class="titles"><span class="eyebrow">// ${filtered ? `${list.length} of ${plural(all.length, 'title')}` : plural(all.length, 'title')}</span><h1 class="display display-md">${every ? 'All' : M.KIND_TAB[kind]}</h1></div>
 <div class="filter-tools">
 ${sortSelect}
-<div class="seg-btns" role="group" aria-label="View">${pick('small', 'Small posters', icon.gridSm, !group && view === 'wall' && size === 'small')}${pick('large', 'Large posters', icon.grid, !group && view === 'wall' && size === 'large')}${pick('list', 'List', icon.rows, !group && view === 'list')}<button type="button" class="icon-btn" data-action="browse-group" data-group="${group || 'franchise'}" aria-pressed="${Boolean(group)}" aria-label="Franchises and studios" title="Franchises and studios">${icon.layers}</button></div>
+<div class="seg-btns" role="group" aria-label="View">${pick('small', 'Small posters', icon.gridSm, !group && view === 'wall' && size === 'small')}${pick('large', 'Large posters', icon.grid, !group && view === 'wall' && size === 'large')}${pick('list', 'List', icon.rows, !group && view === 'list')}<button type="button" class="icon-btn" data-action="browse-group" data-group="${group || state.ui.lastGroup || 'franchise'}" aria-pressed="${Boolean(group)}" aria-label="Groups" title="Groups: franchises, directors, studios, keywords">${icon.layers}</button></div>
 <button type="button" class="btn btn-ghost" data-action="add"${every ? '' : ` data-kind="${kind}"`}>${icon.plus}Add</button>
 </div>
 </div>
@@ -382,7 +421,7 @@ ${all.length ? `<div class="browse-filters">
 <button type="button" class="chip chip-sm bf-fav" data-action="browse-fav" aria-pressed="${f.fav}">${icon.heart}Favorites</button>
 ${filtered ? `<button type="button" class="link-btn" data-action="browse-clear">Clear</button>` : ''}
 </div>
-${group ? `<div class="grp-tabs" role="group" aria-label="Group by">${tab('franchise', 'Franchises')}${tab('studio', 'Studios')}</div>` : ''}
+${group ? `<div class="grp-tabs" role="group" aria-label="Group by">${tab('franchise', 'Franchises')}${tab('director', 'Directors')}${tab('studio', 'Studios')}${tab('keyword', 'Keywords')}</div>` : ''}
 </div>` : ''}
 ${body}
 </div>`;
@@ -764,6 +803,7 @@ ${installBlock(state)}
 <li>Fonts: Chakra Petch, Inter and JetBrains Mono, under the SIL Open Font License.</li>
 </ul>
 <p class="panel-sub">Rewinder v${M.APP_VERSION}</p>
+<p class="panel-sub copyright">© 2026 Sonny Lavallée · Myckealson. All rights reserved.</p>
 </section>
 
 </div>

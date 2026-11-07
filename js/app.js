@@ -30,11 +30,13 @@ const state = {
   ui: {
     list: listDefaults(),
     browseSort: 'recent',
-    // The poster pages: what they show (status, genre, favorites) and how (franchises or studios).
+    // The poster pages: what they show (status, genre, favorites) and how (franchises, directors, studios, keywords).
     browse: { status: '', genre: '', fav: false },
     group: '',
     groupSort: 'score',
     groupFill: null,
+    kwDraft: '',
+    lastGroup: '',
     openSeasons: new Set(),
     openEp: null,
     addSeasonOpen: false,
@@ -1971,40 +1973,100 @@ async function fillMakers() {
   if (filled) requestRender();
 }
 
+// Franchises, studios and release days (titles saved before 1.8), keywords (before 1.9): one call per title,
+// quiet and slow. TMDB first, then RAWG for the games. A source that refuses or is down is left for the next opening.
 let groupsFilling = false;
 async function fillGroups() {
-  if (groupsFilling || !state.settings.tmdbKey) return;
+  if (groupsFilling) return;
   if (typeof navigator.onLine === 'boolean' && !navigator.onLine) return;
-  const todo = M.live(state.titles).filter((t) => t.tmdbId && t.tmdbType && !t.groupsAt);
-  if (!todo.length) return;
+  const now = () => new Date().toISOString();
+  const all = M.live(state.titles);
+  const jobs = [
+    {
+      key: state.settings.tmdbKey,
+      list: all.filter((t) => t.tmdbId && t.tmdbType && (!t.groupsAt || !t.keywordsAt)),
+      need: (t) => !t.groupsAt || !t.keywordsAt,
+      ask: (t, key) => tmdb.fetchGroups(t.tmdbType, t.tmdbId, key),
+      none: () => ({ franchise: null, studios: [], groupsAt: now(), keywords: [], keywordsAt: now() }),
+      pause: 120
+    },
+    {
+      key: state.settings.rawgKey,
+      list: all.filter((t) => t.rawgId && t.kind === 'game' && !t.keywordsAt),
+      need: (t) => !t.keywordsAt,
+      ask: (t, key) => rawg.fetchTags(t.rawgId, key),
+      none: () => ({ keywords: [], keywordsAt: now() }),
+      pause: 250
+    }
+  ].filter((job) => job.key && job.list.length);
+  const total = jobs.reduce((n, job) => n + job.list.length, 0);
+  if (!total) return;
   groupsFilling = true;
-  state.ui.groupFill = { done: 0, total: todo.length };
+  state.ui.groupFill = { done: 0, total };
   requestRender();
   try {
-    for (const t of todo) {
-      if (t.groupsAt || t.deletedAt) { state.ui.groupFill.done++; continue; }
-      try {
-        Object.assign(t, await tmdb.fetchGroups(t.tmdbType, t.tmdbId, state.settings.tmdbKey));
-      } catch (err) {
-        if (!err || err.code !== 'notfound') break;
-        Object.assign(t, { franchise: null, studios: [], groupsAt: new Date().toISOString() });
+    for (const job of jobs) {
+      for (const t of job.list) {
+        if (!job.need(t) || t.deletedAt) { state.ui.groupFill.done++; continue; }
+        try {
+          Object.assign(t, await job.ask(t, job.key));
+        } catch (err) {
+          if (!err || err.code !== 'notfound') break;
+          Object.assign(t, job.none());
+        }
+        try {
+          await store.putTitle(t);
+          announce({ type: 'title', id: t.id });
+        } catch (err) {
+          console.warn('Could not save the groups of', t.title, err);
+          return;
+        }
+        state.ui.groupFill.done++;
+        if (state.ui.groupFill.done % 10 === 0) requestRender();
+        await sleep(job.pause);
       }
-      try {
-        await store.putTitle(t);
-        announce({ type: 'title', id: t.id });
-      } catch (err) {
-        console.warn('Could not save the franchise of', t.title, err);
-        return;
-      }
-      state.ui.groupFill.done++;
-      if (state.ui.groupFill.done % 10 === 0) requestRender();
-      await sleep(120);
     }
   } finally {
     groupsFilling = false;
     state.ui.groupFill = null;
     requestRender();
   }
+}
+
+// Keyword groups: your words, saved on this device.
+function addKeyword(word) {
+  const k = M.cleanKeyword(word);
+  if (!k) return;
+  const list = M.savedKeywords(state.settings);
+  if (!list.includes(k)) {
+    if (list.length >= 30) { toast('30 keywords at most. Remove one first.'); return; }
+    state.settings.keywords = [...list, k];
+    saveSettings();
+  }
+  state.ui.kwDraft = '';
+  const input = document.getElementById('kw-input');
+  if (input) input.value = '';
+  render();
+  // On a computer the field stays ready for the next word; on a phone the keyboard goes away to show the group.
+  if (input && !state.ui.narrow) input.focus();
+  else if (input) input.blur();
+}
+
+// Enter keeps the word you typed when something has it ("time" finds "time travel");
+// a word that finds nothing ("vamp") takes the first suggestion instead ("vampire").
+function typedKeyword(value) {
+  const k = M.cleanKeyword(value);
+  if (!k) return '';
+  const all = M.live(state.titles);
+  if (M.withKeyword(all, k).length) return k;
+  const top = M.suggestKeywords(all, k, M.savedKeywords(state.settings), 1)[0];
+  return top ? top.word : k;
+}
+
+function removeKeyword(word) {
+  state.settings.keywords = M.savedKeywords(state.settings).filter((k) => k !== word);
+  saveSettings();
+  render();
 }
 
 // Once a day at most, and only when something changed. After a restart the
@@ -2603,10 +2665,13 @@ const actions = {
   'browse-fav': () => { state.ui.browse.fav = !state.ui.browse.fav; render(); },
   'browse-clear': () => { state.ui.browse = { status: '', genre: '', fav: false }; render(); },
   'browse-group': (el) => {
-    state.ui.group = el.dataset.group === 'studio' ? 'studio' : 'franchise';
+    state.ui.group = ['director', 'studio', 'keyword'].includes(el.dataset.group) ? el.dataset.group : 'franchise';
+    state.ui.lastGroup = state.ui.group;
     render();
     fillGroups().catch((err) => console.warn('Could not find the franchises', err));
   },
+  'kw-add': (el) => addKeyword(el.dataset.kw),
+  'kw-remove': (el) => removeKeyword(el.dataset.kw),
   'search-for': (el) => {
     state.ui.list = { ...listDefaults(), q: el.dataset.q || '' };
     go('#/list');
@@ -2730,6 +2795,12 @@ document.addEventListener('input', (e) => {
     state.ui.list = { ...listDefaults(), q: el.value };
     state.ui.focusAfter = 'q-list';
     go('#/list');
+    return;
+  }
+  if (el.id === 'kw-input') {
+    state.ui.kwDraft = el.value.slice(0, 60);
+    clearTimeout(listTimer);
+    listTimer = setTimeout(requestRender, 80);
     return;
   }
   if (el.dataset.filter === 'q') {
@@ -2861,7 +2932,8 @@ const forms = {
   'add-season': addSeason,
   'tag-add': addTags,
   'prov-add': addProvider,
-  'game-plat-add': addGamePlatform
+  'game-plat-add': addGamePlatform,
+  'kw-add': (form) => addKeyword(typedKeyword(form.elements.kw ? form.elements.kw.value : ''))
 };
 
 document.addEventListener('submit', (e) => {

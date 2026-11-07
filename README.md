@@ -60,8 +60,12 @@ Rien à installer sur la TV, pas d'inscription : tu montres ton écran dessus, p
 
 - Le mur d'affiches prend toute la largeur. Trois boutons : **petites affiches**, **grosses affiches** ou **liste**, sur All comme sur les autres pages.
 - Sous le titre, les filtres : **statut** (Watchlist, Dropped…), **genre** (Horror, Comedy…) pis **Favorites**. Ils se combinent avec le tri : « Movies · Horror · Completed · Best score ». **Clear** remet tout. Sur Home, les **See all** ouvrent le mur déjà filtré. Full List a aussi son filtre de statut.
-- Le 4e bouton (les couches) montre tes **franchises** : une rangée par franchise (Alien, Scream, Jurassic Park…), les films dans l'ordre de sortie (#1, #2…), les franchises classées par ton score moyen. L'onglet **Studios** regroupe par studio (Marvel Studios, A24…), à partir de deux titres. Les franchises viennent de TMDB : surtout des films. Pour les jeux, les studios viennent de RAWG.
-- Les titres ajoutés avant la 1.8 trouvent leur franchise tout seuls, en arrière-plan, la première fois.
+- Le 4e bouton (les couches) montre tes **groupes**, côte à côte comme des coffrets sur une tablette ; un gros groupe prend la ligne au complet. Chaque groupe garde l'ordre de sortie, pis les groupes se classent par ton score moyen, par nombre de titres ou de A à Z.
+  - **Franchises** : Alien, Scream, Jurassic Park… avec le rang (#1, #2…). Surtout des films (TMDB).
+  - **Directors** : le réalisateur d'un film, les créateurs d'une série (Taylor Sheridan, Christopher Nolan…), à partir de deux titres. Deux noms crédités sur exactement les mêmes titres font un seul groupe (« With Joe Russo »).
+  - **Studios** : Marvel Studios, A24… à partir de deux titres. Les compagnies créditées sur exactement les mêmes titres font un seul groupe (« Also credited: … »). Pour les jeux, les studios viennent de RAWG.
+  - **Keywords** : tape un mot (« vamp » propose « vampire »), pis tout ce qui l'a se ramasse dans un groupe : les mots-clés de TMDB (RAWG pour les jeux), tes propres tags, les genres pis le nom du titre. Ajoutes-en jusqu'à 30 ; le × en enlève un. Entrée garde le mot tapé, sauf s'il ne trouve rien : là, il prend la première suggestion. Les mots-clés sont en anglais : « gladiator », pas « gladiateurs ». Sans rien taper, Rewinder propose les mots-clés les plus courants de ta liste.
+- Les titres ajoutés avant la 1.8 (franchises, studios) ou la 1.9 (mots-clés) vont chercher ce qui leur manque tout seuls, en arrière-plan, la première fois : quelques minutes pour 500 titres.
 - La recherche trouve aussi les studios pis les franchises.
 - **All** montre toutes tes affiches ensemble : films, séries, animes et jeux. Trie par **Best score** pour voir ton top, avec le rang (#1, #2…) sous chaque affiche. Pratique pour ajuster une note qui te semble trop haute ou trop basse.
 - Sur une fiche, **Directed by** (films), **Created by** (séries, animes) ou **Studio** (jeux). Un clic sur le nom montre tout ce que tu as de cette personne dans la **Full List**. La recherche trouve aussi les réalisateurs. Pour les titres déjà dans ta liste, Rewinder va chercher les noms une fois, tout seul (il faut ta clé TMDB, ou RAWG pour les jeux).
@@ -95,6 +99,8 @@ Rien à installer sur la TV, pas d'inscription : tu montres ton écran dessus, p
 - This product uses the TMDB API but is not endorsed or certified by TMDB.
 - Données de jeux : [RAWG](https://rawg.io). Genres d'anime : [AniList](https://anilist.co). Où regarder : JustWatch, par TMDB.
 - Polices : Chakra Petch, Inter et JetBrains Mono, sous licence SIL Open Font License (voir `fonts/`).
+
+© 2026 Sonny Lavallée · Myckealson. Tous droits réservés : l'app, son design pis son logo ne sont pas offerts sous licence libre.
 
 ## Technique
 

@@ -1,6 +1,6 @@
 // Rewinder — data helpers. Pure functions: no DOM, no storage.
 
-export const APP_VERSION = '1.8.1';
+export const APP_VERSION = '1.9.0';
 
 export const KINDS = ['movie', 'tv', 'anime', 'game'];
 export const KIND_LABEL = { movie: 'Movie', tv: 'TV Show', anime: 'Anime', game: 'Game' };
@@ -40,7 +40,9 @@ export const DEFAULT_SETTINGS = {
   shareRemind: true,
   cardSharedSig: '',
   cardSharedAt: null,
-  shareNudgeAt: null
+  shareNudgeAt: null,
+  // Your keyword groups (vampire, gladiator…), in the order you added them.
+  keywords: []
 };
 export const TRASH_DAYS = 30;
 
@@ -195,7 +197,7 @@ export function newTitle(fields = {}) {
     poster: '', backdrop: '', status: 'watchlist', fav: false, score: null, notes: '',
     tags: [], via: '', views: [], platforms: [], game: { story: null, full: null },
     seasons: [], cast: [], makers: null, providers: [], newSeason: null,
-    franchise: null, studios: [], released: '', groupsAt: null,
+    franchise: null, studios: [], released: '', groupsAt: null, keywords: [], keywordsAt: null,
     tmdbId: null, tmdbType: '', watchLink: '', scannedAt: null, rawgId: null, rawgSlug: '', available: [],
     createdAt: now, updatedAt: now, lastActivity: now, deletedAt: null,
     ...fields
@@ -215,6 +217,10 @@ export function makeSeason(n, count) {
 // Pictures only from the services the Scan uses.
 const isImage = (v) => typeof v === 'string' && /^https:\/\/(image\.tmdb\.org|media\.rawg\.io)\/[\w./%-]+$/.test(v);
 const strList = (v, max = 50) => (Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean).slice(0, max) : []);
+
+// Keywords: lowercase, one space between words, each once.
+export const cleanKeyword = (v) => String(v || '').toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 60);
+export const keywordList = (v, max = 80) => (Array.isArray(v) ? [...new Set(v.map(cleanKeyword).filter(Boolean))].slice(0, max) : []);
 const dayOrNull = (v) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
 // 'unknown': you saw it (an imported list says so) but the date is lost.
 const seenDate = (v) => (v === 'unknown' ? 'unknown' : dayOrNull(v));
@@ -277,6 +283,9 @@ export function normalizeTitle(raw) {
     studios: strList(r.studios, 8),
     released: dayOrNull(r.released) || '',
     groupsAt: r.groupsAt ? String(r.groupsAt) : null,
+    // keywordsAt null: never asked TMDB (or RAWG, for games) for its keywords (a title saved before 1.9).
+    keywords: keywordList(r.keywords),
+    keywordsAt: r.keywordsAt ? String(r.keywordsAt) : null,
     tmdbId: Number.isInteger(r.tmdbId) && r.tmdbId > 0 ? r.tmdbId : null,
     tmdbType: r.tmdbType === 'movie' || r.tmdbType === 'tv' ? r.tmdbType : '',
     watchLink: typeof r.watchLink === 'string' && r.watchLink.startsWith('https://www.themoviedb.org/') ? r.watchLink : '',
@@ -300,36 +309,99 @@ export function genreCounts(titles) {
 
 // Studios: TMDB's production companies; for games, the studios RAWG lists.
 export const studiosOf = (t) => (t.kind === 'game' ? (t.makers || []).filter((x) => x.role === 'Studio').map((x) => x.name) : t.studios || []);
+// Directors: a movie's director; a show's creators (or the director of the most episodes).
+export const directorsOf = (t) => (t.makers || []).filter((x) => x.role === 'Director' || x.role === 'Creator').map((x) => x.name);
+
+// A keyword finds a whole word, plural included: "vampire" finds "vampire hunter" and "vampires", not "vampirism".
+// It looks in the keywords from TMDB (RAWG for games), your own tags, the genres and the title.
+const NOT_WORD = '[^\\p{L}\\p{N}]';
+const reEscape = (v) => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function keywordTest(word) {
+  const w = cleanKeyword(word);
+  if (!w) return () => false;
+  const re = new RegExp(`(?:^|${NOT_WORD})${reEscape(w)}(?:e?s)?(?:$|${NOT_WORD})`, 'u');
+  return (text) => text.includes(w) && re.test(text);
+}
+const keywordHay = (t) => [...(t.keywords || []), ...(t.tags || []), ...(t.genres || []), t.title, t.titleQc].filter(Boolean).map((v) => String(v).toLowerCase());
+// Reads each title once, then answers word after word.
+function keywordFinder(list) {
+  const hays = list.map(keywordHay);
+  return (word) => {
+    const test = keywordTest(word);
+    return list.filter((t, i) => hays[i].some(test));
+  };
+}
+export const withKeyword = (list, word) => keywordFinder(list)(word);
+
+// Your keyword groups, cleaned: a backup from somewhere else can't break the page.
+export const savedKeywords = (settings) => keywordList(settings && settings.keywords, 30);
+
+// What to suggest while you type: keywords, tags and genres that start like the word, the most titles first,
+// counted the way the group will count them. With nothing typed: the most common keywords, genres left out.
+export function suggestKeywords(list, draft, saved = [], limit = 10) {
+  const d = cleanKeyword(draft);
+  const skip = new Set(saved);
+  const genres = new Set(list.flatMap((t) => (t.genres || []).map(cleanKeyword)));
+  const counts = new Map();
+  for (const t of list) {
+    const own = new Set([...(t.keywords || []), ...(t.tags || []).map(cleanKeyword), ...(d ? (t.genres || []).map(cleanKeyword) : [])].filter(Boolean));
+    for (const k of own) counts.set(k, (counts.get(k) || 0) + 1);
+  }
+  const starts = d ? new RegExp(`(?:^|${NOT_WORD})${reEscape(d)}`, 'u') : null;
+  const find = keywordFinder(list);
+  const pool = [...counts.entries()]
+    .filter(([k, n]) => !skip.has(k) && (starts ? starts.test(k) : n >= 2 && !genres.has(k)))
+    .sort((a, b) => (d ? Number(b[0].startsWith(d)) - Number(a[0].startsWith(d)) : 0) || b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, limit * 3)
+    .map(([k]) => [k, find(k).length]);
+  return pool
+    .sort((a, b) => (d ? Number(b[0].startsWith(d)) - Number(a[0].startsWith(d)) : 0) || b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, limit)
+    .map(([word, count]) => ({ word, count }));
+}
 
 const releaseKey = (t) => t.released || (t.year ? `${t.year}-99` : '9999');
+const groupAverage = (items) => {
+  const scores = items.map(effectiveScore).filter((v) => v !== null);
+  return { rated: scores.length, avg: scores.length ? Math.round((scores.reduce((x, y) => x + y, 0) / scores.length) * 10) / 10 : null };
+};
 
-// Franchises (TMDB collections, movies) or studios: each group in release order, the best average first.
-// Companies credited on exactly the same titles make one group: a show is often credited to four or five of them.
+// Groups of titles, each in release order:
+// franchise (TMDB collections, movies), director (and show creators), studio, or keyword (your own words, in `words`).
+// Directors and studios need two titles. Names credited on exactly the same titles make one group:
+// a show is often credited to four or five companies, two brothers direct together.
 // The one credited first (TMDB's order) leads; the others are listed under it.
-export function groupTitles(list, by, sort = 'score') {
-  const map = new Map();
-  for (const t of list) {
-    const keys = by === 'studio' ? studiosOf(t) : t.franchise ? [t.franchise.name] : [];
-    for (const name of new Set(keys)) {
-      if (!map.has(name)) map.set(name, []);
-      map.get(name).push(t);
+export function groupTitles(list, by, sort = 'score', words = []) {
+  let groups;
+  if (by === 'keyword') {
+    const find = keywordFinder(list);
+    groups = keywordList(words).map((word) => ({ name: word, also: [], items: find(word) }));
+  } else {
+    const namesOf = by === 'studio' ? studiosOf : by === 'director' ? directorsOf : (t) => (t.franchise ? [t.franchise.name] : []);
+    const map = new Map();
+    for (const t of list) {
+      for (const name of new Set(namesOf(t))) {
+        if (!map.has(name)) map.set(name, []);
+        map.get(name).push(t);
+      }
     }
-  }
-  const same = new Map();
-  for (const [name, items] of map) {
-    if (by === 'studio' && items.length < 2) continue;
-    const key = items.map((t) => t.id).sort().join(' ');
-    if (same.has(key)) same.get(key).names.push(name);
-    else same.set(key, { names: [name], items });
-  }
-  const credit = (name, items) => (by === 'studio' ? items.reduce((n, t) => n + studiosOf(t).indexOf(name), 0) : 0);
-  const groups = [...same.values()]
-    .map(({ names, items }) => {
+    const same = new Map();
+    for (const [name, items] of map) {
+      if (by !== 'franchise' && items.length < 2) continue;
+      const key = items.map((t) => t.id).sort().join(' ');
+      if (same.has(key)) same.get(key).names.push(name);
+      else same.set(key, { names: [name], items });
+    }
+    const credit = (name, items) => items.reduce((n, t) => n + namesOf(t).indexOf(name), 0);
+    groups = [...same.values()].map(({ names, items }) => {
       names.sort((a, b) => credit(a, items) - credit(b, items) || a.localeCompare(b, 'en', { sensitivity: 'base' }));
-      items.sort((a, b) => releaseKey(a).localeCompare(releaseKey(b)) || a.title.localeCompare(b.title));
-      const scores = items.map(effectiveScore).filter((v) => v !== null);
-      return { name: names[0], also: names.slice(1), items, rated: scores.length, avg: scores.length ? Math.round((scores.reduce((x, y) => x + y, 0) / scores.length) * 10) / 10 : null };
+      return { name: names[0], also: names.slice(1), items };
     });
+  }
+  for (const g of groups) {
+    g.items.sort((a, b) => releaseKey(a).localeCompare(releaseKey(b)) || a.title.localeCompare(b.title));
+    Object.assign(g, groupAverage(g.items));
+  }
   if (sort === 'count') groups.sort((a, b) => b.items.length - a.items.length || a.name.localeCompare(b.name));
   else if (sort === 'name') groups.sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));
   else groups.sort((a, b) => (b.avg ?? -1) - (a.avg ?? -1) || b.items.length - a.items.length || a.name.localeCompare(b.name));
@@ -472,6 +544,7 @@ export function mergeScan(t, s) {
   if (s.cast.length) t.cast = s.cast;
   if (Array.isArray(s.makers)) t.makers = s.makers;
   if (s.groupsAt) Object.assign(t, { franchise: s.franchise || null, studios: s.studios || [], released: s.released || t.released, groupsAt: s.groupsAt });
+  if (s.keywordsAt) Object.assign(t, { keywords: keywordList(s.keywords), keywordsAt: s.keywordsAt });
   t.watchLink = s.watchLink || '';
   mergeProviders(t, s);
   return mergeSeasons(t, s);

@@ -74,6 +74,17 @@ function cleanText(text) {
 // The studios that made it (RAWG calls them developers).
 const studiosOf = (g) => uniq(names(g.developers, (d) => d && d.name)).slice(0, 3).map((name) => ({ name: String(name), role: 'Studio' }));
 
+// Keywords for games: RAWG's English tags, minus the store features (achievements, controller support, cloud saves…).
+const STORE_TAG = /^(steam|full controller|partial controller|controller support|tracked controller|in-app|captions|commentary|stats$|includes level editor|valve anti-cheat|remote play|family sharing|cloud|achievements|cross-platform|online pvp$|vr support)/;
+const tagsOf = (g) => [...new Set((g.tags || [])
+  .filter((x) => x && x.name && (!x.language || x.language === 'eng'))
+  .map((x) => String(x.name).toLowerCase().replace(/\s+/g, ' ').trim())
+  .filter((w) => w && !STORE_TAG.test(w) && !/[^\x20-\x7e]/.test(w)))].slice(0, 40);
+
+export async function fetchTags(id, key) {
+  return { keywords: tagsOf(await get(`/games/${id}`, {}, key)), keywordsAt: new Date().toISOString() };
+}
+
 export async function fetchStudios(id, key) {
   return studiosOf(await get(`/games/${id}`, {}, key));
 }
@@ -112,6 +123,8 @@ export async function fetchGame(id, key) {
     backdrop: sized(g.background_image_additional || g.background_image, 1280),
     cast: [],
     makers: studiosOf(g),
+    keywords: tagsOf(g),
+    keywordsAt: new Date().toISOString(),
     providers: providers.slice(0, 10),
     watchLink: '',
     available: uniq(names(g.platforms, (p) => p && p.platform && (PLATFORM[p.platform.name] || p.platform.name))).slice(0, 12),
