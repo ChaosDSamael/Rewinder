@@ -1,5 +1,5 @@
 // Rewinder — offline support. Bump VERSION on every release so browsers pick up the new files.
-const VERSION = 'rewinder-1.3.0';
+const VERSION = 'rewinder-1.4.0';
 const SHELL = [
   './',
   './index.html',
@@ -53,7 +53,12 @@ self.addEventListener('fetch', (event) => {
   event.respondWith((async () => {
     const cache = await caches.open(VERSION);
     if (request.mode === 'navigate') {
-      return (await cache.match('./index.html')) || fetch(request);
+      // Only the app's own page gets the saved copy; any other address goes to the network.
+      const home = new URL(self.registration.scope).pathname;
+      if (url.pathname === home || url.pathname === home + 'index.html') {
+        return (await cache.match('./index.html')) || fetch(request);
+      }
+      return fetch(request);
     }
     const hit = await cache.match(request, { ignoreSearch: true });
     return hit || fetch(request);

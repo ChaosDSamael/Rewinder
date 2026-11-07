@@ -36,6 +36,12 @@ async function get(path, params, key, signal) {
   return res.json();
 }
 
+// The start guide's "Check" button.
+export async function checkKey(key) {
+  await get('/configuration', {}, key);
+  return true;
+}
+
 const day = (v) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : '');
 const yearOf = (v) => (/^\d{4}/.test(v || '') ? Number(String(v).slice(0, 4)) : null);
 const image = (path, size) => (typeof path === 'string' && /^\/[\w.-]+$/.test(path) ? IMG + size + path : '');

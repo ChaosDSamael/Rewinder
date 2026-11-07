@@ -23,6 +23,11 @@ async function get(path, params, key, signal) {
   return res.json();
 }
 
+export async function checkKey(key) {
+  await get('/games', { page_size: '1' }, key);
+  return true;
+}
+
 const yearOf = (v) => (/^\d{4}/.test(v || '') ? Number(String(v).slice(0, 4)) : null);
 const names = (list, pick) => (list || []).map(pick).filter(Boolean);
 

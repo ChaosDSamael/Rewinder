@@ -30,6 +30,12 @@ const result = (request) => new Promise((resolve, reject) => {
   request.onerror = () => reject(request.error);
 });
 
+// A write started while the page closes gets cancelled unless the browser is told to commit
+// at once; with this, a note typed just before closing the app still lands.
+const commitNow = (transaction) => {
+  try { if (transaction.commit) transaction.commit(); } catch { /* older browsers commit on their own */ }
+};
+
 const finished = (transaction) => new Promise((resolve, reject) => {
   transaction.oncomplete = () => resolve();
   transaction.onerror = () => reject(transaction.error);
@@ -60,6 +66,7 @@ export async function putTitle(title) {
   const db = await open();
   const tx = db.transaction('titles', 'readwrite');
   tx.objectStore('titles').put(title);
+  commitNow(tx);
   return finished(tx);
 }
 
@@ -75,10 +82,26 @@ export async function deleteTitle(id) {
   return finished(tx);
 }
 
+// Other things worth keeping, like the backup folder you picked.
+export async function getMeta(key) {
+  const db = await open();
+  return result(db.transaction('meta', 'readonly').objectStore('meta').get(key));
+}
+
+export async function putMeta(key, value) {
+  const db = await open();
+  const tx = db.transaction('meta', 'readwrite');
+  if (value === undefined || value === null) tx.objectStore('meta').delete(key);
+  else tx.objectStore('meta').put(value, key);
+  commitNow(tx);
+  return finished(tx);
+}
+
 export async function putSettings(settings) {
   const db = await open();
   const tx = db.transaction('meta', 'readwrite');
   tx.objectStore('meta').put({ ...settings }, 'settings');
+  commitNow(tx);
   return finished(tx);
 }
 

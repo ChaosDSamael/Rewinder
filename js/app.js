@@ -44,6 +44,8 @@ const state = {
 
 const importDefaults = (kind = '') => ({ step: 'paste', kind, text: '', useTags: true, items: [], matching: false, noKey: false, done: 0, total: 0, current: '', results: null, changeId: null, changeQuery: '', changeResults: null, changeLoading: false });
 state.imp = importDefaults();
+state.guide = { step: 0, tmdb: { state: '', msg: '' }, rawg: { state: '', msg: '' } };
+state.folder = { supported: typeof window.showDirectoryPicker === 'function', name: '', granted: false, handle: null };
 
 const byId = (id) => state.titles.find((t) => t.id === id) || null;
 const cur = () => state.current;
@@ -81,7 +83,9 @@ function render() {
   root.classList.toggle('spoiler-on', Boolean(state.settings.spoiler));
   root.classList.toggle('scan-off', !state.settings.scanlines);
   const tpl = document.createElement('template');
-  tpl.innerHTML = V.header(state) + `<main id="main" tabindex="-1">${view()}</main>` + V.footer();
+  tpl.innerHTML = r.name === 'welcome' && state.ready && !state.error
+    ? `<main id="main" tabindex="-1">${V.guideView(state)}</main>`
+    : V.header(state) + `<main id="main" tabindex="-1">${view()}</main>` + V.footer();
   morphChildren(root, tpl.content);
 
   const target = focusAfter || (hadFocus && !root.contains(document.activeElement) ? hadFocus : '');
@@ -134,6 +138,7 @@ function parseRoute() {
   if (parts[0] === 'title' && parts[1]) return { name: 'title', id: parts[1] };
   if (parts[0] === 'settings') return { name: 'settings' };
   if (parts[0] === 'import') return { name: 'import' };
+  if (parts[0] === 'welcome') return { name: 'welcome' };
   return { name: 'notfound' };
 }
 
@@ -173,7 +178,7 @@ function onRoute() {
   document.title = r.name === 'title' && t ? `${t.title} · Rewinder`
     : r.name === 'list' ? 'Full List · Rewinder'
       : r.name === 'browse' ? `${M.KIND_TAB[r.kind]} · Rewinder`
-        : r.name === 'settings' ? 'Settings · Rewinder' : r.name === 'import' ? 'Import · Rewinder' : 'Rewinder';
+        : r.name === 'settings' ? 'Settings · Rewinder' : r.name === 'import' ? 'Import · Rewinder' : r.name === 'welcome' ? 'Welcome · Rewinder' : 'Rewinder';
   if (t) loadHistory(t.id);
 }
 
@@ -313,8 +318,8 @@ async function commit(t, historyText) {
   clearTimeout(saveTimers.get(t.id));
   saveTimers.delete(t.id);
   touch(t);
-  await persist(t);
   countChange();
+  await persist(t);
   await log(t, historyText);
 }
 
@@ -464,6 +469,14 @@ function addViewToday(t) {
   if (!t.views.length || t.views[t.views.length - 1].date !== d) t.views.push({ date: d });
 }
 
+function seenNewSeason(t, sn) {
+  if (t.newSeason === null || sn < t.newSeason) return '';
+  t.newSeason = null;
+  if (t.status !== 'completed') return '';
+  t.status = 'progress';
+  return 'Status · Completed → In Progress (new season)';
+}
+
 // Checking episodes moves the status along: first one → In Progress, last one → Completed.
 function autoStatus(t) {
   if (!M.hasEpisodes(t)) return '';
@@ -533,8 +546,8 @@ async function submitAdd(form) {
   closeDialog();
   go('#/title/' + encodeURIComponent(t.id));
   toast(`${t.title} added`);
-  await persist(t);
   countChange();
+  await persist(t);
   await log(t, `Added · ${M.STATUS_LABEL[status]}`);
 }
 
@@ -765,7 +778,7 @@ async function watchNext(id) {
   if (typeof score === 'number') nx.ep.score = score;
   delete state.ui.homeScore[id];
   state.ui.heroId = id;
-  const statusText = autoStatus(t);
+  const statusText = seenNewSeason(t, nx.season.n) || autoStatus(t);
   render();
   toast(t.status === 'completed' ? `${t.title} · completed` : `${code} logged${typeof score === 'number' ? ' · ' + score.toFixed(1) : ''}`);
   await commit(t, `Watched ${code}${typeof score === 'number' ? ' · ' + score.toFixed(1) : ''}`);
@@ -780,7 +793,7 @@ async function setEpisodeWatched(key, checked) {
   if (!ep) return;
   const code = M.epCode(sn, en);
   ep.watched = checked ? M.today() : null;
-  const statusText = checked ? autoStatus(t) : '';
+  const statusText = checked ? seenNewSeason(t, sn) || autoStatus(t) : '';
   requestRender();
   if (statusText && t.status === 'completed') toast(`${t.title} · completed`);
   await commit(t, checked ? `Watched ${code}${typeof ep.score === 'number' ? ' · ' + ep.score.toFixed(1) : ''}` : `Unchecked ${code}`);
@@ -797,7 +810,7 @@ async function markSeasonWatched(n) {
     if (!e.watched) { e.watched = d; count++; }
   }
   if (!count) return;
-  const statusText = autoStatus(t);
+  const statusText = seenNewSeason(t, n) || autoStatus(t);
   render();
   await commit(t, `Watched all of ${M.seasonName(n)} · ${count} episode${count === 1 ? '' : 's'}`);
   await log(t, statusText);
@@ -1138,8 +1151,8 @@ async function pickScan(type, id, openId) {
   closeDialog();
   go('#/title/' + encodeURIComponent(t.id));
   toast(`${t.title} added${size}`);
-  await persist(t);
   countChange();
+  await persist(t);
   await log(t, `Added with Scan · ${M.STATUS_LABEL[status]}`);
 }
 
@@ -1393,8 +1406,8 @@ async function importItem(it) {
   }
   L.applyLine(t, it, { useGroups, status: it.status });
   state.titles.push(t);
-  await persist(t);
   countChange();
+  await persist(t);
   await log(t, `Imported from your list: ${it.line}`.slice(0, 200));
 }
 
@@ -1430,6 +1443,187 @@ async function runImport() {
   imp.current = '';
   if (state.route.name === 'import') render();
   toast(`List imported · ${imp.results.added + imp.results.manual} added, ${imp.results.updated} updated`);
+}
+
+/* ---------- start guide ---------- */
+
+async function finishGuide(to) {
+  if (!state.settings.onboarded) {
+    state.settings.onboarded = true;
+    await saveSettings();
+  }
+  state.guide.step = 0;
+  go(to);
+}
+
+async function checkGuideKey(which) {
+  const input = document.getElementById(`g-${which}`);
+  const key = (input ? input.value : '').trim();
+  const g = state.guide[which];
+  const name = which === 'tmdb' ? 'tmdbKey' : 'rawgKey';
+  if (!key) {
+    g.state = 'bad';
+    g.msg = 'Paste the key first.';
+    render();
+    return;
+  }
+  state.settings[name] = key.slice(0, 400);
+  g.state = 'checking';
+  render();
+  try {
+    if (which === 'tmdb') await tmdb.checkKey(key);
+    else await rawg.checkKey(key);
+    g.state = 'ok';
+    g.msg = '';
+  } catch (err) {
+    g.state = 'bad';
+    g.msg = err && err.message ? err.message : 'That key did not work.';
+  }
+  await saveSettings();
+  state.ui.focusAfter = g.state === 'ok' ? 'guide-next' : `g-${which}`;
+  render();
+}
+
+/* ---------- new seasons, once a day ---------- */
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Shows you follow (in progress, finished, on hold) get checked on TMDB once a day, when Rewinder opens.
+// New episodes slip in quietly; a new season gets a NEW badge, a spot in New Seasons and a heads-up.
+async function checkNewSeasons() {
+  const key = state.settings.tmdbKey;
+  const day = M.today();
+  if (!key || state.settings.lastSeasonCheck === day || (typeof navigator.onLine === 'boolean' && !navigator.onLine)) return;
+  state.settings.lastSeasonCheck = day;
+  await saveSettings();
+  const follow = M.live(state.titles).filter((t) => M.hasEpisodes(t) && t.tmdbId && t.tmdbType === 'tv' && ['progress', 'completed', 'hold'].includes(t.status));
+  const fresh = [];
+  for (const t of follow) {
+    try {
+      const data = await tmdb.fetchTitle('tv', t.tmdbId, key);
+      const before = t.seasons.reduce((m, s) => Math.max(m, s.n), 0);
+      M.mergeProviders(t, data);
+      const counts = M.mergeSeasons(t, data);
+      const after = t.seasons.reduce((m, s) => Math.max(m, s.n), 0);
+      if (after > before && before > 0) {
+        t.newSeason = after;
+        fresh.push(t);
+        await commit(t, `New season: ${M.seasonName(after)}`);
+      } else if (counts.episodes) {
+        await commit(t, `${counts.episodes} new episode${counts.episodes === 1 ? '' : 's'} from TMDB`);
+      }
+    } catch (err) {
+      if (err && (err.code === 'auth' || err.code === 'network')) break;
+    }
+    await sleep(250);
+  }
+  if (!fresh.length) return;
+  requestRender();
+  toast(fresh.length === 1 ? `New season: ${fresh[0].title}, ${M.seasonName(fresh[0].newSeason)}` : `${fresh.length} shows have a new season`, {
+    action: { label: 'See', run: () => go('#/') },
+    timeout: 10000
+  });
+}
+
+/* ---------- backups to a folder ---------- */
+
+const BACKUP_NAME = /^rewinder-backup-\d{4}-\d{2}-\d{2}\.json$/;
+
+async function permissionOf(handle, ask) {
+  try {
+    const opts = { mode: 'readwrite' };
+    let p = await handle.queryPermission(opts);
+    if (p !== 'granted' && ask) p = await handle.requestPermission(opts);
+    return p === 'granted';
+  } catch {
+    return false;
+  }
+}
+
+async function loadBackupFolder() {
+  if (!state.folder.supported) return;
+  let handle = null;
+  try { handle = await store.getMeta('backupDir'); } catch { handle = null; }
+  if (!handle) return;
+  state.folder.handle = handle;
+  state.folder.name = handle.name || 'your folder';
+  state.folder.granted = await permissionOf(handle, false);
+}
+
+async function folderBackup(manual) {
+  const f = state.folder;
+  if (!f.handle) return false;
+  f.granted = await permissionOf(f.handle, manual);
+  if (!f.granted) { requestRender(); return false; }
+  try {
+    flushSaves();
+    const data = await store.exportAll();
+    const file = await f.handle.getFileHandle(`rewinder-backup-${M.today()}.json`, { create: true });
+    const out = await file.createWritable();
+    await out.write(JSON.stringify(data, null, 1));
+    await out.close();
+    const names = [];
+    for await (const [name, h] of f.handle.entries()) if (h.kind === 'file' && BACKUP_NAME.test(name)) names.push(name);
+    names.sort();
+    for (const old of names.slice(0, -10)) await f.handle.removeEntry(old).catch(() => {});
+    const now = new Date().toISOString();
+    state.settings.folderBackupAt = now;
+    state.settings.lastBackupAt = now;
+    state.settings.changesSinceBackup = 0;
+    state.settings.backupSnoozeUntil = null;
+    await saveSettings();
+    requestRender();
+    if (manual) toast(`Backup saved in ${f.name}.`);
+    return true;
+  } catch (err) {
+    console.error(err);
+    if (manual) toast('The folder backup failed. ' + (err && err.message ? err.message : ''));
+    return false;
+  }
+}
+
+// Once a day at most, and only when something changed. After a restart the
+// browser may want its OK again: a toast then asks for it, one click.
+async function autoFolderBackup() {
+  const f = state.folder;
+  if (!f.handle || !(state.settings.changesSinceBackup > 0)) return;
+  const last = state.settings.folderBackupAt ? Date.parse(state.settings.folderBackupAt) : 0;
+  if (Date.now() - last < 20 * 3600e3) return;
+  if (!f.granted) {
+    toast(`A backup is due in ${f.name}.`, { action: { label: 'Allow', run: () => { allowBackupFolder(); } }, timeout: 15000 });
+    return;
+  }
+  await folderBackup(false);
+}
+
+async function pickBackupFolder() {
+  if (!state.folder.supported) return;
+  let handle;
+  try {
+    handle = await window.showDirectoryPicker({ id: 'rewinder-backups', mode: 'readwrite' });
+  } catch (err) {
+    if (err && err.name !== 'AbortError') toast('Could not use that folder.');
+    return;
+  }
+  state.folder.handle = handle;
+  state.folder.name = handle.name || 'your folder';
+  state.folder.granted = true;
+  try { await store.putMeta('backupDir', handle); } catch (err) { console.warn('Folder not remembered', err); }
+  await folderBackup(true);
+}
+
+async function allowBackupFolder() {
+  if (!state.folder.handle) return;
+  state.folder.granted = await permissionOf(state.folder.handle, true);
+  render();
+  if (state.folder.granted) await folderBackup(true);
+}
+
+async function stopBackupFolder() {
+  state.folder = { ...state.folder, handle: null, name: '', granted: false };
+  try { await store.putMeta('backupDir', null); } catch { /* nothing to forget */ }
+  render();
+  toast('Automatic folder backups stopped. The files already there stay.');
 }
 
 /* ---------- backup ---------- */
@@ -1630,6 +1824,17 @@ const actions = {
     render();
   },
   'imp-run': () => runImport(),
+  'guide-open': () => { state.guide.step = 0; go('#/welcome'); },
+  'guide-next': () => { state.guide.step = Math.min(4, state.guide.step + 1); state.ui.focusAfter = 'guide-next'; render(); },
+  'guide-back': () => { state.guide.step = Math.max(0, state.guide.step - 1); state.ui.focusAfter = 'guide-next'; render(); },
+  'guide-to': (el) => finishGuide(el.dataset.to || '#/'),
+  'guide-add': async () => { await finishGuide('#/'); openScan(); },
+  'guide-restore': async () => { await finishGuide('#/'); importInput.value = ''; importInput.click(); },
+  'guide-check': (el) => checkGuideKey(el.dataset.which),
+  'folder-pick': () => pickBackupFolder(),
+  'folder-now': () => folderBackup(true),
+  'folder-allow': () => allowBackupFolder(),
+  'folder-stop': () => stopBackupFolder(),
   'list-cat': (el) => { state.ui.list.cat = el.dataset.cat; render(); },
   'list-clear': (el) => {
     const k = el.dataset.key;
@@ -1735,6 +1940,14 @@ document.addEventListener('input', (e) => {
     return;
   }
   if (el.dataset.impQ !== undefined) { changeTyped(el.value); return; }
+  if (el.dataset.guideKey) {
+    const which = el.dataset.guideKey;
+    state.settings[which === 'tmdb' ? 'tmdbKey' : 'rawgKey'] = el.value.trim().slice(0, 400);
+    state.guide[which] = { state: '', msg: '' };
+    clearTimeout(listTimer);
+    listTimer = setTimeout(() => { requestRender(); saveSettings(); }, 300);
+    return;
+  }
   if (el.id === 'add-title') { checkDuplicate(el.value); formError('add-error', ''); return; }
   if (el.dataset.setting === 'accent') { applyTheme(el.value); return; }
   const t = cur();
@@ -1890,10 +2103,18 @@ async function start() {
   applyTheme();
   state.ready = true;
   await purgeExpired();
+  if (!state.error && !state.settings.onboarded && !M.live(state.titles).length && !location.hash.replace(/^#\/?/, '')) {
+    history.replaceState(null, '', '#/welcome');
+  }
+  await loadBackupFolder();
   onRoute();
   registerWorker();
   state.persisted = await store.persist();
   if (state.route.name === 'settings') requestRender();
+  setTimeout(() => {
+    checkNewSeasons().catch((err) => console.warn('Season check failed', err));
+    autoFolderBackup().catch((err) => console.warn('Folder backup failed', err));
+  }, 2500);
 }
 
 start();

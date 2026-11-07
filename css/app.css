@@ -586,6 +586,51 @@ form:has(input[name="kind"][value="game"]:checked) .only-series { display: none;
   .imp-tools { justify-content: flex-start; }
 }
 
+/* ---------- M4: start guide, folder backups ---------- */
+
+.guide { min-height: 100vh; max-width: 1080px; margin: 0 auto; padding: 24px var(--pad) 48px; display: flex; flex-direction: column; gap: 16px; }
+.guide-top { display: flex; align-items: center; gap: 16px; }
+.guide-brand { display: flex; align-items: center; gap: 10px; font-family: var(--head); font-weight: 700; font-size: 16px; letter-spacing: .14em; }
+.guide-brand img { border-radius: 5px; }
+.guide-count { margin-left: auto; font-family: var(--mono); font-size: 13px; letter-spacing: .12em; color: var(--text-2); }
+.guide-top .link-btn { min-height: 36px; }
+.guide-segs span { height: 4px; }
+.guide-card { position: relative; overflow: hidden; flex: 1 0 auto; padding: clamp(28px, 5vw, 56px); border: 1px solid rgba(255, 255, 255, .08); border-radius: 6px; background: radial-gradient(900px 420px at 85% 0%, color-mix(in oklab, var(--accent) 10%, transparent), transparent 60%), var(--s1); }
+.guide-card-hero { display: flex; flex-direction: column; justify-content: center; }
+.guide-card-hero .guide-body { margin: 0 auto 6vh; }
+.guide-body { position: relative; display: flex; flex-direction: column; gap: 18px; max-width: 760px; animation: rw-from-right .45s cubic-bezier(.2, .7, .2, 1) both; }
+.guide-hero { display: flex; flex-wrap: wrap; align-items: center; gap: 28px 48px; }
+.guide-logo { position: relative; flex: 0 0 auto; width: 240px; height: 240px; display: grid; place-items: center; }
+.guide-logo .visor { position: absolute; inset: 0; right: auto; top: 0; width: 240px; height: 240px; margin: 0; opacity: .75; }
+.guide-logo img { position: relative; width: 168px; height: 168px; filter: drop-shadow(0 12px 30px rgba(0, 0, 0, .6)); }
+.guide-text { flex: 1 1 320px; display: flex; flex-direction: column; gap: 14px; }
+.guide-swatches { display: flex; flex-wrap: wrap; gap: 12px; }
+.g-swatch { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 14px; width: 132px; padding: 14px; background: transparent; border: 1px solid var(--line-3); border-radius: 6px; color: var(--text-2); font-family: var(--head); font-weight: 600; font-size: 14px; letter-spacing: .1em; text-transform: uppercase; cursor: pointer; text-align: left; }
+.g-swatch:hover { border-color: var(--line-4); }
+.g-sw-dot { width: 100%; height: 56px; border-radius: 4px; background: linear-gradient(135deg, var(--sw), color-mix(in oklab, var(--sw) 45%, #0D0F0F)); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .15); }
+.g-swatch[aria-pressed="true"], .g-swatch.on { border-color: var(--sw); color: var(--text); box-shadow: 0 0 0 1px var(--sw), 0 0 24px color-mix(in oklab, var(--sw) 30%, transparent); }
+.guide-steps { margin: 0; padding: 0; list-style: none; counter-reset: gs; display: flex; flex-direction: column; gap: 10px; }
+.guide-steps li { counter-increment: gs; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding: 12px 14px 12px 52px; position: relative; border: 1px solid var(--line-2); border-radius: 4px; background: rgba(255, 255, 255, .02); color: var(--text-2); }
+.guide-steps li::before { content: counter(gs, decimal-leading-zero); position: absolute; left: 14px; top: 13px; font-family: var(--mono); font-size: 13px; color: var(--accent); }
+.guide-steps li > span { flex: 1 1 360px; }
+.guide-steps b { color: var(--text); font-weight: 600; }
+.guide-steps code { padding: 1px 6px; border-radius: 3px; background: var(--s2); font-family: var(--mono); font-size: 12px; color: var(--text); overflow-wrap: anywhere; }
+.guide-key { display: flex; gap: 10px; max-width: 620px; }
+.key-plain { font-family: var(--mono); font-size: 13px; }
+.guide-msg { margin: -6px 0 0; min-height: 20px; font-family: var(--mono); font-size: 13px; color: var(--muted); }
+.guide-msg.ok { color: #9BE07A; }
+.guide-msg.bad { color: #FF9C93; }
+.guide-nav { display: flex; justify-content: space-between; gap: 10px; margin-top: 8px; }
+.guide-choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.g-choice { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 18px; background: rgba(255, 255, 255, .02); border: 1px solid var(--line-3); border-radius: 6px; color: var(--text); text-align: left; cursor: pointer; transition: border-color .2s ease, transform .2s ease; }
+.g-choice:hover { border-color: var(--accent-line); transform: translateY(-2px); }
+.g-choice .ico { color: var(--accent); width: 22px; height: 22px; }
+.g-choice b { font-family: var(--head); font-weight: 700; font-size: 16px; letter-spacing: .08em; text-transform: uppercase; }
+.g-choice small { color: var(--muted); font-size: 13px; }
+.folder-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding-top: 12px; border-top: 1px solid var(--line); }
+.folder-row .set-text { flex: 1 1 320px; }
+.folder-note { padding-top: 12px; border-top: 1px solid var(--line); }
+
 /* ---------- toasts and footer ---------- */
 
 .toasts { position: fixed; right: 20px; bottom: 20px; z-index: 100; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; pointer-events: none; }

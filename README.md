@@ -11,11 +11,15 @@ Des notes sur 10 (les étoiles se remplissent au dixième), des commentaires, le
 2. Clique sur **Install** dans l'app (ou menu du navigateur → *Installer Rewinder*).
 3. Rewinder s'ouvre ensuite dans sa propre fenêtre, à partir du menu Démarrer. Il marche aussi sans internet.
 
+À la première ouverture, un **guide de démarrage** t'amène en 4 étapes : ta couleur, ta clé TMDB, ta clé RAWG, pis par où commencer. Chaque étape se saute. Pour le revoir : **Settings → App → Open the start guide**.
+
 ## Tes données
 
 - Ta liste reste dans ton navigateur, sur ton ordi. Rien n'est envoyé ailleurs.
 - De temps en temps : **Settings → Backup → Download backup**. Le fichier sert aussi à amener ta liste sur un autre ordi (**Restore a backup**).
 - Si tu effaces les données du site dans ton navigateur, la liste part avec. D'où les backups.
+- **Backup automatique** (Chrome et Edge) : **Settings → Backup → Choose a folder**. Une fois par jour, s'il y a eu des changements, Rewinder écrit une copie dans ce dossier (un dossier OneDrive ou Google Drive, c'est encore mieux). Les 10 copies les plus récentes restent. Après un redémarrage, le navigateur peut redemander ta permission : un clic sur **Allow**.
+- Brave garde cette option fermée : cherche « File System Access » dans `brave://flags` pour l'ouvrir, puis redémarre Brave. Sinon, **Download backup** fait la job.
 
 ## Le Scan
 
@@ -24,6 +28,7 @@ Des notes sur 10 (les étoiles se remplissent au dixième), des commentaires, le
 - Chaque personne met ses propres clés gratuites dans **Settings** : [TMDB](https://www.themoviedb.org/settings/api) pour les films, séries et animes, [RAWG](https://rawg.io/apidocs) pour les jeux. Les clés restent dans ton navigateur et ne vont jamais dans les backups. Le formulaire de TMDB demande une adresse et un numéro de téléphone.
 - Sur une fiche faite à la main, **Scan** la relie à TMDB ou RAWG. Ensuite, **Rescan** la met à jour. Tes notes, tes épisodes cochés et tes commentaires restent.
 - Sans clé, tout marche à la main.
+- **Nouvelles saisons** : à l'ouverture, une fois par jour, Rewinder regarde sur TMDB les séries et les animes que tu suis (In Progress, Completed ou On Hold). Une nouvelle saison apparaît dans **New Seasons** sur l'accueil. Quand tu coches un de ses épisodes, une série Completed repasse In Progress.
 
 ## Importer une liste
 

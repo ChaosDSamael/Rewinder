@@ -1,6 +1,6 @@
 // Rewinder — data helpers. Pure functions: no DOM, no storage.
 
-export const APP_VERSION = '1.3.0';
+export const APP_VERSION = '1.4.0';
 
 export const KINDS = ['movie', 'tv', 'anime', 'game'];
 export const KIND_LABEL = { movie: 'Movie', tv: 'TV Show', anime: 'Anime', game: 'Game' };
@@ -28,7 +28,10 @@ export const DEFAULT_SETTINGS = {
   rawgKey: '',
   lastBackupAt: null,
   changesSinceBackup: 0,
-  backupSnoozeUntil: null
+  backupSnoozeUntil: null,
+  onboarded: false,
+  lastSeasonCheck: null,
+  folderBackupAt: null
 };
 export const TRASH_DAYS = 30;
 
@@ -343,7 +346,6 @@ const seasonHasData = (s) => Boolean(typeof s.score === 'number' || s.notes || s
 // Pours a Scan into a title. Your own things stay: status, scores, notes, checks, tags, friends, your platforms.
 // Seasons and episodes made by hand that TMDB doesn't know are dropped, unless you put something in them.
 export function mergeScan(t, s) {
-  const counts = { seasons: 0, episodes: 0 };
   if (s.source === 'rawg') {
     t.rawgId = s.rawgId;
     t.rawgSlug = s.rawgSlug || '';
@@ -365,10 +367,21 @@ export function mergeScan(t, s) {
   if (s.backdrop) t.backdrop = s.backdrop;
   if (s.cast.length) t.cast = s.cast;
   t.watchLink = s.watchLink || '';
+  mergeProviders(t, s);
+  return mergeSeasons(t, s);
+}
+
+export function mergeProviders(t, s) {
   const source = s.source === 'rawg' ? 'rawg' : 'tmdb';
   const scanned = s.providers.map((p) => ({ name: p.name, source, url: p.url || '' }));
   const mine = t.providers.filter((p) => p.source === 'manual' && !scanned.some((n) => n.name.toLowerCase() === p.name.toLowerCase()));
   t.providers = [...scanned, ...mine];
+  if (source === 'tmdb') t.watchLink = s.watchLink || '';
+}
+
+// Seasons and episodes only: what the daily new-season check refreshes.
+export function mergeSeasons(t, s) {
+  const counts = { seasons: 0, episodes: 0 };
   if (!s.seasons) return counts;
   for (const ss of s.seasons) {
     let season = findSeason(t, ss.n);

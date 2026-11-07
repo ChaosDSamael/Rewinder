@@ -37,6 +37,12 @@ export const footer = () => `<footer class="foot"><span>Rewinder · v${M.APP_VER
 /* ---------- cards and tables ---------- */
 
 function cardMeta(t) {
+  if (t.newSeason !== null) {
+    const s = M.findSeason(t, t.newSeason);
+    const first = s && s.episodes[0];
+    if (!first || M.isAired(first)) return `Season ${t.newSeason} is out`;
+    return first.tba ? `Season ${t.newSeason} · date TBA` : `Season ${t.newSeason} · ${M.fmtDate(first.aired)}`;
+  }
   if (M.hasEpisodes(t) && t.status === 'progress') {
     const nx = M.nextEpisode(t);
     if (nx) {
@@ -517,6 +523,20 @@ function keyField(name, label, hint, link, value) {
 <a class="small-link" href="${link}" target="_blank" rel="noopener">Where to get it ↗</a></div>`;
 }
 
+function folderBlock(state) {
+  const f = state.folder;
+  if (!f.supported) {
+    return '<p class="set-text dim folder-note">Automatic backups to a folder work in Chrome and Edge. Brave keeps them off: search “File System Access” in brave://flags to turn them on, then restart Brave. Until then, Download backup does the job.</p>';
+  }
+  if (!f.name) {
+    return `<div class="folder-row"><p class="set-text">Back up automatically to a folder, once a day. The 10 latest copies are kept.</p><button type="button" class="btn btn-ghost" data-action="folder-pick">${icon.download}Choose a folder</button></div>`;
+  }
+  const last = state.settings.folderBackupAt ? ` · last copy ${esc(M.fmtDate(state.settings.folderBackupAt, true))}` : '';
+  return `<div class="folder-row"><p class="set-text">Automatic backup to <b>${esc(f.name)}</b>${last}</p>
+<span class="actions">${f.granted ? '<button type="button" class="btn btn-ghost btn-sm" data-action="folder-now">Back up now</button>' : '<button type="button" class="btn btn-primary btn-sm" data-action="folder-allow">Allow access</button>'}<button type="button" class="btn btn-ghost btn-sm" data-action="folder-pick">Change</button><button type="button" class="btn btn-ghost btn-sm btn-danger" data-action="folder-stop">Stop</button></span></div>
+${f.granted ? '' : '<p class="set-text dim">Your browser wants your OK again before Rewinder writes in that folder.</p>'}`;
+}
+
 function installBlock(state) {
   if (state.standalone) return '<p class="set-text">Rewinder is installed on this computer. Open it from the Start menu or the taskbar.</p>';
   if (state.canInstall) return `<p class="set-text">Install Rewinder to open it like any other app, in its own window.</p><div class="actions"><button type="button" class="btn btn-primary" data-action="install">${icon.install}Install Rewinder</button></div>`;
@@ -550,6 +570,7 @@ ${keyField('rawgKey', 'RAWG key', 'API key', 'https://rawg.io/apidocs', s.rawgKe
 <p class="set-text">Your list lives only in this browser. Download a backup now and then, and keep it somewhere safe, like a cloud folder. A backup also moves your list to another computer.</p>
 ${needsBackup(state) ? `<p class="reminder">${icon.download}<span>${s.lastBackupAt ? `Last backup ${esc(M.fmtDate(s.lastBackupAt, true))} · ${plural(s.changesSinceBackup || 0, 'change')} since.` : 'No backup yet.'} Time for one.</span><button type="button" class="link-btn" data-action="backup-later">Later</button></p>` : `<p class="panel-sub">${s.lastBackupAt ? `Last backup ${esc(M.fmtDate(s.lastBackupAt, true))} · ${plural(s.changesSinceBackup || 0, 'change')} since` : 'No backup yet'}</p>`}
 <div class="actions"><button type="button" class="btn btn-primary" data-action="export">${icon.download}Download backup</button><button type="button" class="btn btn-ghost" data-action="import">${icon.upload}Restore a backup</button><a class="btn btn-ghost" href="#/import">${icon.rows}Import a list</a></div>
+${folderBlock(state)}
 </section>
 
 <section class="set-sec" aria-labelledby="set-trash"><h2 class="h2" id="set-trash"><span class="sq" aria-hidden="true"></span>Trash<span class="count">${trashed.length}</span></h2>
@@ -559,6 +580,7 @@ ${trashed.length ? `<ul class="trash">${trashed.map((t) => `<li data-key="tr-${e
 
 <section class="set-sec" aria-labelledby="set-app"><h2 class="h2" id="set-app"><span class="sq" aria-hidden="true"></span>App</h2>
 ${installBlock(state)}
+<div class="actions"><button type="button" class="btn btn-ghost" data-action="guide-open">Open the start guide</button></div>
 <p class="panel-sub">${state.persisted ? 'Storage: protected, the browser will not clear your list on its own.' : 'Storage: standard. Install the app and keep backups to be safe.'}</p>
 </section>
 
@@ -785,5 +807,94 @@ export function importView(state) {
   return `<div class="page page-import">
 <div class="page-head"><div class="titles"><span class="eyebrow">${esc(sub)}</span><h1 class="display display-md">Import</h1></div></div>
 ${body}
+</div>`;
+}
+
+/* ---------- start guide ---------- */
+
+const GUIDE_STEPS = 5;
+
+function keyBox(which, state) {
+  const g = state.guide[which];
+  const id = `g-${which}`;
+  const name = which === 'tmdb' ? 'TMDB' : 'RAWG';
+  const msg = g.state === 'checking' ? 'Checking…' : g.state === 'ok' ? `✓ The ${name} key works.` : g.state === 'bad' ? g.msg : '';
+  return `<div class="guide-key"><label class="sr" for="${id}">${name} key</label><input id="${id}" class="input key-plain" data-guide-key="${which}" value="${esc(state.settings[which === 'tmdb' ? 'tmdbKey' : 'rawgKey'])}" placeholder="Paste your ${name} key" autocomplete="off" spellcheck="false" autocapitalize="off"><button type="button" class="btn btn-primary" data-action="guide-check" data-which="${which}"${g.state === 'checking' ? ' disabled' : ''}>Check</button></div>
+<p class="guide-msg ${g.state}" role="status">${esc(msg)}</p>`;
+}
+
+function guideNav(state, nextLabel) {
+  return `<div class="guide-nav"><button type="button" class="btn btn-ghost" data-action="guide-back">Back</button><button type="button" class="btn btn-primary" id="guide-next" data-action="guide-next">${esc(nextLabel)}</button></div>`;
+}
+
+function guideStep(state) {
+  const at = state.guide.step;
+  const appUrl = `${location.origin}${location.pathname}`;
+  if (at === 0) {
+    return `<div class="guide-hero">
+<div class="guide-logo">${visor}<img src="icons/icon-512.png" alt="Rewinder logo" width="168" height="168"></div>
+<div class="guide-text">
+<span class="eyebrow">// Welcome</span>
+<h1 class="display">Rewinder</h1>
+<p class="lead">Movies, TV shows, anime and games. Rate them, track every episode, never forget what you watched.</p>
+<p class="set-text dim">Four quick steps. Each one can be skipped.</p>
+<div class="actions"><button type="button" class="btn btn-primary" id="guide-next" data-action="guide-next">Start</button></div>
+</div>
+</div>`;
+  }
+  if (at === 1) {
+    const isPreset = M.PRESETS.some((p) => p.color.toLowerCase() === String(state.settings.accent).toLowerCase());
+    return `<span class="eyebrow">// 1 · Your color</span>
+<h1 class="display display-md">Pick your color</h1>
+<p class="lead">It paints the whole app. You can change it anytime in Settings.</p>
+<div class="guide-swatches" role="group" aria-label="Color">${M.PRESETS.map((p) => `<button type="button" class="g-swatch" data-action="accent" data-color="${p.color}" aria-pressed="${p.color.toLowerCase() === String(state.settings.accent).toLowerCase()}" style="--sw:${p.color}"><span class="g-sw-dot" aria-hidden="true"></span>${p.name}</button>`).join('')}<label class="g-swatch swatch-custom${isPreset ? '' : ' on'}" style="--sw:${isPreset ? '#5A6360' : esc(state.settings.accent)}"><span class="g-sw-dot" aria-hidden="true"></span>Custom<input type="color" id="g-accent" value="${esc(state.settings.accent)}" data-setting="accent" aria-label="Custom color"></label></div>
+${guideNav(state, 'Next')}`;
+  }
+  if (at === 2) {
+    const ok = state.guide.tmdb.state === 'ok' || state.settings.tmdbKey;
+    return `<span class="eyebrow">// 2 · The Scan</span>
+<h1 class="display display-md">Turn on the Scan</h1>
+<p class="lead">The Scan fills in posters, episodes, cast and where to watch. It needs a free key from TMDB, the movie database. A few minutes, once.</p>
+<ol class="guide-steps">
+<li><span><b>Create a free account.</b></span><a class="btn btn-ghost btn-sm" href="https://www.themoviedb.org/signup" target="_blank" rel="noopener">Open TMDB ↗</a></li>
+<li><span><b>Confirm the email</b> TMDB sends you.</span></li>
+<li><span><b>Request a key</b> on the API page of your account settings. If asked, pick Developer. Type of use: Desktop Application. Name: Rewinder. URL: <code>${esc(appUrl)}</code>. Summary: “My personal watch list.” The form also asks for your address and phone number.</span><a class="btn btn-ghost btn-sm" href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">Open the API page ↗</a></li>
+<li><span><b>Copy the API Key</b> (the short one) and paste it here.</span></li>
+</ol>
+${keyBox('tmdb', state)}
+${guideNav(state, ok ? 'Next' : 'Skip for now')}`;
+  }
+  if (at === 3) {
+    const ok = state.guide.rawg.state === 'ok' || state.settings.rawgKey;
+    return `<span class="eyebrow">// 3 · Games</span>
+<h1 class="display display-md">Games too?</h1>
+<p class="lead">Optional. Games come from RAWG, with its own free key.</p>
+<ol class="guide-steps">
+<li><span><b>Create an account</b> on RAWG.</span><a class="btn btn-ghost btn-sm" href="https://rawg.io/signup" target="_blank" rel="noopener">Open RAWG ↗</a></li>
+<li><span><b>Get your key</b> on the API page.</span><a class="btn btn-ghost btn-sm" href="https://rawg.io/apidocs" target="_blank" rel="noopener">Open the API page ↗</a></li>
+<li><span><b>Paste it here.</b></span></li>
+</ol>
+${keyBox('rawg', state)}
+<p class="set-text dim">rawg.io is sometimes down. No stress: you can add this key later in Settings.</p>
+${guideNav(state, ok ? 'Next' : 'Skip for now')}`;
+  }
+  return `<span class="eyebrow">// 4 · Ready</span>
+<h1 class="display display-md">You're set</h1>
+<div class="guide-choices">
+<button type="button" class="g-choice" data-action="guide-to" data-to="#/import">${icon.rows}<b>Import a list</b><small>Got a list in Notepad? Bring it in.</small></button>
+<button type="button" class="g-choice" data-action="guide-add">${icon.radar}<b>Add a title</b><small>Find it with the Scan, or add it by hand.</small></button>
+${state.canInstall ? `<button type="button" class="g-choice" data-action="install">${icon.install}<b>Install Rewinder</b><small>Open it like any app, from the Start menu.</small></button>` : ''}
+<button type="button" class="g-choice" data-action="guide-restore">${icon.upload}<b>Restore a backup</b><small>Moving from another computer?</small></button>
+</div>
+<p class="set-text dim">Your list stays on this computer. Settings → Backup keeps a copy safe.</p>
+<div class="guide-nav"><button type="button" class="btn btn-ghost" data-action="guide-back">Back</button><button type="button" class="btn btn-primary" id="guide-next" data-action="guide-to" data-to="#/">Go to Home</button></div>`;
+}
+
+export function guideView(state) {
+  const at = state.guide.step;
+  return `<div class="guide">
+<div class="guide-top"><span class="guide-brand"><img src="icons/logo-64.png" alt="" width="28" height="28">REWINDER</span><span class="guide-count">${M.pad2(at + 1)} / ${M.pad2(GUIDE_STEPS)}</span><button type="button" class="link-btn" data-action="guide-to" data-to="#/">Skip the guide</button></div>
+<div class="segs guide-segs" aria-hidden="true" style="--n:${GUIDE_STEPS}">${Array.from({ length: GUIDE_STEPS }, (_, i) => `<span class="${i < at ? 'w' : i === at ? 'nx' : ''}"></span>`).join('')}</div>
+<section class="guide-card${at === 0 ? ' guide-card-hero' : ''}" data-key="guide-${at}" aria-live="polite"><div class="scanlines" aria-hidden="true"></div>${corners}<div class="guide-body">${guideStep(state)}</div></section>
 </div>`;
 }
