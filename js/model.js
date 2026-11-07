@@ -1,6 +1,6 @@
 // Rewinder — data helpers. Pure functions: no DOM, no storage.
 
-export const APP_VERSION = '1.6.1';
+export const APP_VERSION = '1.7.0';
 
 export const KINDS = ['movie', 'tv', 'anime', 'game'];
 export const KIND_LABEL = { movie: 'Movie', tv: 'TV Show', anime: 'Anime', game: 'Game' };
@@ -34,7 +34,13 @@ export const DEFAULT_SETTINGS = {
   cardId: '',
   cardName: '',
   lastSeasonCheck: null,
-  folderBackupAt: null
+  folderBackupAt: null,
+  wallSize: '',
+  tvButton: false,
+  shareRemind: true,
+  cardSharedSig: '',
+  cardSharedAt: null,
+  shareNudgeAt: null
 };
 export const TRASH_DAYS = 30;
 
@@ -107,6 +113,27 @@ export const nextEpisode = (t) => episodes(t).find((x) => !x.ep.watched) || null
 export const shownDate = (v, withYear) => (v === 'unknown' ? 'date unknown' : fmtDate(v, withYear));
 
 export const isAired = (e) => !e.tba && (!e.aired || e.aired <= today());
+
+// Completed from memory (Add several): seen, the date is not known. Returns a line for the history.
+export function markSeenUnknown(t) {
+  if (t.kind === 'movie') {
+    if (t.views.length) return '';
+    t.views.push({ date: 'unknown' });
+    return 'Counted as seen · date unknown';
+  }
+  if (t.kind === 'game') {
+    if (t.game.story || t.game.full) return '';
+    t.game.story = 'unknown';
+    return 'Story counted as done · date unknown';
+  }
+  let n = 0;
+  for (const s of t.seasons) {
+    for (const e of s.episodes) {
+      if (!e.watched && isAired(e)) { e.watched = 'unknown'; n++; }
+    }
+  }
+  return n ? `${n} aired episode${n === 1 ? '' : 's'} checked · date unknown` : '';
+}
 
 export function airLabel(e) {
   if (e.tba) return 'Date TBA';
@@ -491,6 +518,17 @@ export function makeCard(titles, { id, name }) {
       };
     })
   };
+}
+
+// A short fingerprint of what your card says: it changes when a title, score, status, favorite or tag does.
+export function cardSignature(titles, name) {
+  const text = JSON.stringify([name || '', makeCard(titles, { id: '', name: '' }).titles]);
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return `${(h >>> 0).toString(36)}.${text.length.toString(36)}`;
 }
 
 export const isCard = (d) => Boolean(d && d.app === 'rewinder' && d.kind === 'card' && Array.isArray(d.titles));

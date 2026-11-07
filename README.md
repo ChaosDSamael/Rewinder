@@ -18,7 +18,7 @@ Les **Guides** (en bas de chaque page, ou dans Settings) expliquent tout ça pou
 ## Sur téléphone et tablette
 
 - Android : ouvre le lien dans Chrome, puis **⋮ → Install app** (ou *Add to Home screen*).
-- iPhone et iPad : ouvre le lien dans Safari, puis **Partager → Sur l'écran d'accueil**. Ouvre toujours Rewinder par cette icône : Safari peut effacer les données d'un site après 7 jours sans visite, l'app de l'écran d'accueil les garde.
+- iPhone et iPad : ouvre le lien dans Safari, puis **Partager → Sur l'écran d'accueil**. Fais-le en premier, puis ouvre toujours Rewinder par cette icône : elle garde sa propre liste, à part de Safari, et Safari peut effacer les données d'un site après 7 jours sans visite.
 - Chaque appareil garde sa propre liste. Pour amener la tienne : **Download backup** sur l'ordi, envoie-toi le fichier, pis **Restore a backup** sur le téléphone.
 - La barre du bas : **Home**, **All**, **Scan**, **List** et **Friends**. La recherche et les Settings sont en haut.
 
@@ -30,6 +30,7 @@ Rien à installer sur la TV, pas d'inscription : tu montres ton écran dessus, p
 - iPhone ou iPad + Apple TV ou TV AirPlay : Centre de contrôle → **Recopie de l'écran**.
 - Ordi : dans Chrome, **⋮ → Cast, save and share → Cast…**, ou un câble HDMI.
 - **TV mode** (en bas de page ou dans Settings) : plein écran, grosses affiches. Ton **Top**, l'accueil en grand (**Home**), pis **Tonight** qui pige un titre dans ta watchlist. Les flèches (ou la télécommande) se promènent, Enter ouvre, Back ou Escape revient.
+- Pour un bouton TV en haut de chaque page : **Settings → TV → Show the TV button at the top**. Caché par défaut.
 
 ## Tes données
 
@@ -48,8 +49,16 @@ Rien à installer sur la TV, pas d'inscription : tu montres ton écran dessus, p
 - Sans clé, tout marche à la main.
 - **Nouvelles saisons** : à l'ouverture, une fois par jour, Rewinder regarde sur TMDB les séries et les animes que tu suis (In Progress, Completed ou On Hold). Une nouvelle saison apparaît dans **New Seasons** sur l'accueil. Quand tu coches un de ses épisodes, une série Completed repasse In Progress.
 
+## Ajouter plusieurs titres
+
+- Dans **Scan**, active **Add several**. Chaque titre que tu choisis est ajouté tout de suite, pis la recherche se vide pour le prochain. Le statut choisi reste pour les suivants.
+- **Done · review** ouvre la page **Just added** : une ligne par titre, pour le noter, changer son statut ou l'enlever. Tout s'enregistre au fur et à mesure.
+- Ajoutés de mémoire : **Completed** compte comme vu, date inconnue (les épisodes déjà sortis sont cochés). La date se change sur la page du titre.
+- **Add it by hand** marche aussi : tu reviens dans Scan après.
+
 ## Parcourir
 
+- Le mur d'affiches prend toute la largeur. Trois boutons : **petites affiches**, **grosses affiches** ou **liste**, sur All comme sur les autres pages.
 - **All** montre toutes tes affiches ensemble : films, séries, animes et jeux. Trie par **Best score** pour voir ton top, avec le rang (#1, #2…) sous chaque affiche. Pratique pour ajuster une note qui te semble trop haute ou trop basse.
 - Sur une fiche, **Directed by** (films), **Created by** (séries, animes) ou **Studio** (jeux). Un clic sur le nom montre tout ce que tu as de cette personne dans la **Full List**. La recherche trouve aussi les réalisateurs. Pour les titres déjà dans ta liste, Rewinder va chercher les noms une fois, tout seul (il faut ta clé TMDB, ou RAWG pour les jeux).
 
@@ -60,9 +69,10 @@ Rien à installer sur la TV, pas d'inscription : tu montres ton écran dessus, p
 
 ## Cartes d'amis
 
-- L'icône du petit bonhomme, à gauche de la recherche. Écris ton nom, puis **Share my card** : un fichier `rewinder-card-ton-nom.json` à envoyer à tes amis (Discord, courriel…).
+- L'icône du petit bonhomme, à gauche de la recherche (sur cell : **Friends**, en bas). Écris ton nom, puis **Share my card**. Sur un cell, ça ouvre le menu de partage (Messenger, Discord, textos) avec un fichier `rewinder-card-ton-nom.txt`. Sur l'ordi, ça enregistre `rewinder-card-ton-nom.json` à envoyer (Discord, courriel…).
+- Rewinder ne peut pas envoyer ta carte tout seul : c'est toi qui choisis l'ami pis qui envoies. Par contre, une fois ta carte partagée, un point apparaît sur **Friends** quand ta liste change, pis un rappel au plus une fois par jour avec un bouton **Share**. Ça se ferme dans **Settings → Friends**.
 - Ta carte contient tes notes, tes statuts, tes favoris et tes tags. Jamais tes commentaires, tes dates ni tes clés.
-- Pour ajouter la carte d'un ami : **Add a friend's card**, ou glisse le fichier n'importe où dans Rewinder. Une carte plus récente du même ami remplace l'ancienne.
+- Pour ajouter la carte d'un ami (.json ou .txt) : **Add a friend's card**, ou glisse le fichier n'importe où dans Rewinder. Une carte plus récente du même ami remplace l'ancienne.
 - L'écran de l'ami : le % d'accord (la part de vos titres en commun où vous êtes à 1 point ou moins), **In common**, ce qu'il a vu et pas toi (**+ Watchlist** l'ajoute avec « Recommended by »), pis vos plus gros désaccords.
 - Les cartes restent sur ton ordi. Elles ne se mettent pas à jour toutes seules : ton ami t'en renvoie une quand sa liste change.
 

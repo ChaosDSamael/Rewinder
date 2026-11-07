@@ -37,7 +37,7 @@ function friendsButton(state) {
   const n = state.friends.length;
   const open = state.ui.friendsOpen;
   return `<div class="friends-wrap">
-<button type="button" class="icon-btn friends-btn" id="friends-btn" data-action="friends-toggle" aria-expanded="${open}" aria-controls="friends-pop" aria-label="Friends${n ? ', ' + friendCount(n) : ''}" title="Friends">${icon.bust}${n ? `<span class="count-badge" aria-hidden="true">${n}</span>` : ''}</button>
+<button type="button" class="icon-btn friends-btn" id="friends-btn" data-action="friends-toggle" aria-expanded="${open}" aria-controls="friends-pop" aria-label="Friends${n ? ', ' + friendCount(n) : ''}${state.ui.cardStale ? ', your card changed since you shared it' : ''}" title="${state.ui.cardStale ? 'Friends · your card changed, share it again' : 'Friends'}">${icon.bust}${n ? `<span class="count-badge" aria-hidden="true">${n}</span>` : ''}${state.ui.cardStale ? '<span class="ping ping-card" aria-hidden="true"></span>' : ''}</button>
 ${open ? `<div class="sheet-scrim" data-action="friends-toggle" aria-hidden="true"></div>${friendsPanel(state)}` : ''}
 </div>`;
 }
@@ -52,7 +52,7 @@ export function tabbar(state) {
 <a class="tab" href="#/all"${on(r.name === 'browse')}>${icon.grid}<span>All</span></a>
 <button type="button" class="tab tab-scan" data-action="add">${icon.radar}<span>Scan</span></button>
 <a class="tab" href="#/list"${on(r.name === 'list')}>${icon.rows}<span>List</span></a>
-<button type="button" class="tab" data-action="friends-toggle" aria-expanded="${state.ui.friendsOpen}" aria-label="Friends${n ? ', ' + friendCount(n) : ''}"${on(r.name === 'friend')}>${icon.bust}<span>Friends</span>${n ? `<span class="count-badge" aria-hidden="true">${n}</span>` : ''}</button>
+<button type="button" class="tab" data-action="friends-toggle" aria-expanded="${state.ui.friendsOpen}" aria-label="Friends${n ? ', ' + friendCount(n) : ''}${state.ui.cardStale ? ', your card changed since you shared it' : ''}"${on(r.name === 'friend')}>${icon.bust}<span>Friends</span>${n ? `<span class="count-badge" aria-hidden="true">${n}</span>` : ''}${state.ui.cardStale ? '<span class="ping ping-card" aria-hidden="true"></span>' : ''}</button>
 </nav>`;
 }
 
@@ -71,7 +71,8 @@ function friendsPanel(state) {
 <div class="fp-me">${nick(name || '?')}<span class="fp-who"><span class="fp-me-title">Your card</span><span class="fp-meta">${esc(name || 'Your name')} · ${mine} titles</span></span></div>
 <label class="field"><span class="label">Your name on the card</span><input id="card-name" class="input input-sm" data-setting="cardName" value="${esc(name)}" maxlength="40" placeholder="Your first name" autocomplete="off" data-keep></label>
 <p class="fp-note">Your scores, statuses, favorites and tags. Never your notes.</p>
-<button type="button" class="btn btn-primary" data-action="card-share">${icon.download}Share my card</button>
+${state.ui.cardStale ? '<p class="fp-stale"><span class="ping-inline" aria-hidden="true"></span>Your list changed since you shared your card.</p>' : ''}
+<button type="button" class="btn btn-primary" data-action="card-share">${icon.upload}Share my card</button>
 </div>
 ${rows ? `<ul class="fp-list" aria-label="Your friends">${rows}</ul>` : '<p class="fp-note">No friend yet. Ask a friend for their card, then add it here.</p>'}
 <button type="button" class="btn btn-dashed" data-action="card-pick">${icon.plus}Add a friend's card</button>
@@ -84,14 +85,15 @@ export function header(state) {
   const cur = r.name === 'browse' ? r.kind : r.name === 'title' && state.current ? state.current.kind : null;
   const nav = (href, label, on) => `<a class="nav-link" href="${href}"${on ? ' aria-current="page"' : ''}>${label}</a>`;
   const spoiler = state.settings.spoiler;
-  return `<header class="top">
+  return `<header class="top${state.settings.tvButton ? ' has-tv' : ''}">
 <a class="brand" href="#/" aria-label="Rewinder, home"><img src="icons/logo-64.png" alt="" width="36" height="36"><span>REWINDER</span></a>
 <nav class="nav" aria-label="Sections">${nav('#/', 'Home', r.name === 'home')}${nav('#/list', 'Full List', r.name === 'list')}<span class="nav-sep" aria-hidden="true"></span>${nav('#/all', 'All', cur === 'all')}${M.KINDS.map((k) => nav('#/' + M.KIND_PATH[k], M.KIND_TAB[k], cur === k)).join('')}</nav>
 <div class="tools">
 ${friendsButton(state)}
 ${r.name === 'list' ? '' : `<div class="search">${icon.search}<label class="sr" for="q-head">Search your list</label><input id="q-head" type="search" placeholder="Titles, actors, directors, tags" autocomplete="off" spellcheck="false"></div>`}
-<button type="button" class="icon-btn only-phone" data-action="search-open" aria-label="Search your list">${icon.search}</button>
+<button type="button" class="icon-btn only-phone search-icon" data-action="search-open" aria-label="Search your list" title="Search your list">${icon.search}</button>
 ${state.canInstall ? `<button type="button" class="btn btn-ghost" data-action="install">${icon.install}Install</button>` : ''}
+${state.settings.tvButton ? `<button type="button" class="icon-btn tv-btn" data-action="tv-enter" aria-label="TV mode" title="TV mode">${icon.tv}</button>` : ''}
 <button type="button" class="icon-btn" data-action="spoiler" aria-pressed="${spoiler}" aria-label="Spoiler mode" title="${spoiler ? 'Spoiler mode is on: your notes are blurred' : 'Spoiler mode: blur your notes'}">${icon.eyeOff}</button>
 <a class="icon-btn icon-settings" href="#/settings" aria-label="${needsBackup(state) ? 'Settings, a backup is due' : 'Settings'}" title="${needsBackup(state) ? 'Settings · time for a backup' : 'Settings'}"${r.name === 'settings' ? ' aria-current="page"' : ''}>${icon.sliders}${needsBackup(state) ? '<span class="ping" aria-hidden="true"></span>' : ''}</a>
 <button type="button" class="btn btn-primary btn-scan" data-action="add">${icon.radar}<span>Scan</span><span class="sweep" aria-hidden="true"></span></button>
@@ -324,18 +326,20 @@ ${titleTable(rows, { q: f.q, emptyText: all.length ? 'No titles match. Try anoth
 export function browseView(state, kind) {
   const every = kind === 'all';
   const all = M.live(state.titles).filter((t) => every || t.kind === kind);
-  const view = !every && state.settings.browseView === 'list' ? 'list' : 'wall';
+  const view = state.settings.browseView === 'list' ? 'list' : 'wall';
+  const size = state.settings.wallSize === 'large' || state.settings.wallSize === 'small' ? state.settings.wallSize : state.ui.narrow ? 'large' : 'small';
   const list = M.sortTitles(all, state.ui.browseSort);
   const body = !all.length
     ? `<div class="empty-box"><p class="lead">${every ? 'Nothing here yet.' : `No ${KIND_PLURAL[kind]} yet.`}</p><button type="button" class="btn btn-primary" data-action="add"${every ? '' : ` data-kind="${kind}"`}>${icon.plus}${every ? 'Add a title' : `Add ${A_KIND[kind]}`}</button></div>`
-    : view === 'wall' ? `<div class="wall">${list.map((t, i) => card(t, { kind: every, rank: state.ui.browseSort === 'score' && M.effectiveScore(t) !== null ? i + 1 : 0 })).join('')}</div>` : titleTable(list, { showKind: false });
+    : view === 'wall' ? `<div class="wall wall-${size === 'large' ? 'lg' : 'sm'}">${list.map((t, i) => card(t, { kind: every, rank: state.ui.browseSort === 'score' && M.effectiveScore(t) !== null ? i + 1 : 0 })).join('')}</div>` : titleTable(list, { showKind: every });
+  const pick = (v, label, ico, on) => `<button type="button" class="icon-btn" data-action="browse-view" data-view="${v}" aria-pressed="${on}" aria-label="${label}" title="${label}">${ico}</button>`;
   const chip = (href, label, current) => `<a class="kind-chip" href="${href}"${current ? ' aria-current="page"' : ''}>${label}</a>`;
-  return `<div class="page page-list">
+  return `<div class="page page-list${view === 'wall' ? ' page-wall' : ''}">
 <nav class="kind-chips" aria-label="Kinds">${chip('#/all', 'All', every)}${M.KINDS.map((k) => chip('#/' + M.KIND_PATH[k], M.KIND_TAB[k], kind === k)).join('')}</nav>
 <div class="page-head"><div class="titles"><span class="eyebrow">// ${plural(all.length, 'title')}</span><h1 class="display display-md">${every ? 'All' : M.KIND_TAB[kind]}</h1></div>
 <div class="filter-tools">
 <label class="sr" for="sort-browse">Sort by</label><select id="sort-browse" class="select" data-filter="browseSort">${sortOptions(state.ui.browseSort)}</select>
-${every ? '' : `<div class="seg-btns" role="group" aria-label="View"><button type="button" class="icon-btn" data-action="browse-view" data-view="wall" aria-pressed="${view === 'wall'}" aria-label="Poster wall" title="Poster wall">${icon.grid}</button><button type="button" class="icon-btn" data-action="browse-view" data-view="list" aria-pressed="${view === 'list'}" aria-label="List" title="List">${icon.rows}</button></div>`}
+<div class="seg-btns" role="group" aria-label="View">${pick('small', 'Small posters', icon.gridSm, view === 'wall' && size === 'small')}${pick('large', 'Large posters', icon.grid, view === 'wall' && size === 'large')}${pick('list', 'List', icon.rows, view === 'list')}</div>
 <button type="button" class="btn btn-ghost" data-action="add"${every ? '' : ` data-kind="${kind}"`}>${icon.plus}Add</button>
 </div>
 </div>
@@ -688,6 +692,17 @@ ${needsBackup(state) ? `<p class="reminder">${icon.download}<span>${s.lastBackup
 ${folderBlock(state)}
 </section>
 
+<section class="set-sec" aria-labelledby="set-friends"><h2 class="h2" id="set-friends"><span class="sq" aria-hidden="true"></span>Friends</h2>
+<p class="set-text">Your card goes to your friends by hand: Friends → Share my card. On a phone, that opens the share menu (Messenger, Discord, texts).</p>
+<div class="set-row"><label class="switch"><input type="checkbox" role="switch" id="set-remind" data-setting="shareRemind"${s.shareRemind ? ' checked' : ''}><span class="switch-ui" aria-hidden="true"></span>Remind me to share my card</label><span class="panel-sub">Once you've shared it: a dot on Friends when your list changes, and a reminder once a day.</span></div>
+</section>
+
+<section class="set-sec" aria-labelledby="set-tv"><h2 class="h2" id="set-tv"><span class="sq" aria-hidden="true"></span>TV</h2>
+<p class="set-text">Big posters for the couch: your top, Home in big, and a pick for tonight. Show your screen on the TV first: the guides say how.</p>
+<div class="set-row"><label class="switch"><input type="checkbox" role="switch" id="set-tvbtn" data-setting="tvButton"${s.tvButton ? ' checked' : ''}><span class="switch-ui" aria-hidden="true"></span>Show the TV button at the top</label><span class="panel-sub">One tap to TV mode, from any page.</span></div>
+<div class="actions"><button type="button" class="btn btn-ghost" data-action="tv-enter">${icon.tv}TV mode</button><button type="button" class="btn btn-ghost" data-action="guides-open" data-tab="tv">${icon.book}TV guide</button></div>
+</section>
+
 <section class="set-sec" aria-labelledby="set-trash"><h2 class="h2" id="set-trash"><span class="sq" aria-hidden="true"></span>Trash<span class="count">${trashed.length}</span></h2>
 <p class="set-text">Deleted titles wait here for ${M.TRASH_DAYS} days, then they're gone for good.</p>
 ${trashed.length ? `<ul class="trash">${trashed.map((t) => `<li data-key="tr-${esc(t.id)}"><span class="tt"><span class="tt-main">${esc(t.title)}</span><span class="tt-sub">${M.KIND_LABEL[t.kind]} · deleted ${esc(M.fmtDate(t.deletedAt))} · ${plural(daysLeft(t), 'day')} left</span></span><span class="actions"><button type="button" class="btn btn-ghost btn-sm" data-action="restore" data-id="${esc(t.id)}">Restore</button><button type="button" class="btn btn-ghost btn-sm btn-danger" data-action="purge" data-id="${esc(t.id)}">Delete forever</button></span></li>`).join('')}</ul>` : '<p class="panel-sub">Empty.</p>'}
@@ -695,7 +710,7 @@ ${trashed.length ? `<ul class="trash">${trashed.map((t) => `<li data-key="tr-${e
 
 <section class="set-sec" aria-labelledby="set-app"><h2 class="h2" id="set-app"><span class="sq" aria-hidden="true"></span>App</h2>
 ${installBlock(state)}
-<div class="actions"><button type="button" class="btn btn-ghost" data-action="guide-open">Open the start guide</button><a class="btn btn-ghost" href="#/guides">${icon.book}Guides: computer, phone, TV</a><button type="button" class="btn btn-ghost" data-action="tv-enter">${icon.tv}TV mode</button></div>
+<div class="actions"><button type="button" class="btn btn-ghost" data-action="guide-open">Open the start guide</button><a class="btn btn-ghost" href="#/guides">${icon.book}Guides: computer, phone, TV</a></div>
 <p class="panel-sub">${state.persisted ? 'Storage: protected, the browser will not clear your list on its own.' : 'Storage: standard. Install the app and keep backups to be safe.'}</p>
 </section>
 
@@ -986,15 +1001,16 @@ export function guidesView(state) {
     ],
     phone: [
       step('Android', 'Open the link in Chrome, then <b>⋮ → Install app</b> (or <b>Add to Home screen</b>). Rewinder gets its own icon.'),
-      step('iPhone and iPad', 'Open the link in Safari, then <b>Share → Add to Home Screen</b>. Always open Rewinder from that icon: Safari can erase a website’s data after 7 days without a visit, but the home screen app keeps it.'),
+      step('iPhone and iPad', 'Open the link in Safari, then <b>Share → Add to Home Screen</b>. Do it first, then always open Rewinder from that icon: it keeps its own list, apart from Safari, and Safari can erase a website’s data after 7 days without a visit.'),
       step('Your list from the computer', 'Each device keeps its own list. On the computer: <b>Settings → Download backup</b>. Send the file to yourself (email, Discord, Drive). On the phone: <b>Settings → Restore a backup</b>. Your keys are never in a backup: paste them again in Settings.'),
-      step('Find your way', 'The bar at the bottom: <b>Home</b>, <b>All</b>, <b>Scan</b>, <b>List</b> and <b>Friends</b>. Search and Settings are at the top.')
+      step('Find your way', 'The bar at the bottom: <b>Home</b>, <b>All</b>, <b>Scan</b>, <b>List</b> and <b>Friends</b>. Search and Settings are at the top.'),
+      step('Friends', '<b>Friends → Share my card</b> opens the share menu: Messenger, Discord, texts. A card you receive: save the file, then <b>Friends → Add a friend’s card</b>.')
     ],
     tv: [
       step('Android phone or tablet + Chromecast or Google TV', 'In the Google Home app, pick your TV, then <b>Cast my screen</b>. Turn the phone sideways.'),
       step('iPhone or iPad + Apple TV or an AirPlay TV', 'Open Control Center, then <b>Screen Mirroring</b> and pick your TV. Turn the device sideways.'),
       step('Computer + Chromecast or Google TV', 'In Chrome: <b>⋮ → Cast, save and share → Cast…</b> and pick your TV. Or plug the computer into the TV with an HDMI cable.'),
-      step('Then: TV mode', 'Big posters for the couch: your <b>Top</b>, <b>Home</b> in big, and <b>Tonight</b>, which picks something from your watchlist. Arrows (or the remote) move, Enter opens, Back or Escape leaves.', `<button type="button" class="btn btn-primary" data-action="tv-enter">${icon.tv}Open TV mode</button>`)
+      step('Then: TV mode', 'Big posters for the couch: your <b>Top</b>, <b>Home</b> in big, and <b>Tonight</b>, which picks something from your watchlist. Arrows (or the remote) move, Enter opens, Back or Escape leaves. For a TV button at the top of every page: <b>Settings → TV</b>.', `<button type="button" class="btn btn-primary" data-action="tv-enter">${icon.tv}Open TV mode</button>`)
     ]
   };
   return `<div class="page page-guides">
@@ -1004,6 +1020,47 @@ export function guidesView(state) {
 ${tab === 'tv' ? '<p class="gd-lead">No sign-up, nothing to install on the TV: show your screen on it, then open TV mode.</p>' : ''}
 <ol class="gd-steps">${panes[tab].join('')}</ol>
 </section>
+</div>`;
+}
+
+/* ---------- add several: the page to rate them ---------- */
+
+function batchRow(state, j) {
+  if (j.state === 'run' || j.state === 'wait') {
+    return `<li class="bat-row bat-wait" data-key="bj-${esc(j.key)}"><span class="bat-thumb" aria-hidden="true"></span><span class="bat-main"><span class="bat-title">${esc(j.title)}</span><span class="bat-sub">Adding…</span></span></li>`;
+  }
+  if (j.state === 'fail') {
+    return `<li class="bat-row bat-fail" data-key="bj-${esc(j.key)}"><span class="bat-thumb" aria-hidden="true"></span><span class="bat-main"><span class="bat-title">${esc(j.title)}</span><span class="bat-sub">Not added · ${esc(j.error)}</span></span><span class="bat-tools"><button type="button" class="btn btn-ghost btn-sm" data-action="batch-retry" data-key="${esc(j.key)}">Try again</button></span></li>`;
+  }
+  const t = state.titles.find((x) => x.id === j.titleId);
+  if (!t || t.deletedAt) return '';
+  const dup = j.state === 'dup';
+  const id = esc(t.id);
+  return `<li class="bat-row" data-key="bt-${id}">
+<a class="bat-thumb" href="${tHref(t)}" style="background:${M.artFor(t)}" tabindex="-1" aria-hidden="true">${t.poster ? `<img src="${esc(t.poster)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}</a>
+<span class="bat-main"><a class="bat-title" href="${tHref(t)}">${esc(t.title)}</a><span class="bat-sub">${esc([M.KIND_LABEL[t.kind], t.year].filter(Boolean).join(' · '))}${dup ? ' · was already in your list' : ''}</span></span>
+<span class="bat-status"><label class="sr" for="bs-${id}">Status for ${esc(t.title)}</label><select id="bs-${id}" class="select select-sm" data-batch-status="${id}">${M.STATUSES.map((x) => `<option value="${x}"${x === t.status ? ' selected' : ''}>${M.STATUS_LABEL[x]}</option>`).join('')}</select></span>
+<span class="bat-rate">${rater({ key: 'row:' + t.id, value: M.effectiveScore(t), label: `Score for ${t.title}`, size: 'sm' })}</span>
+<span class="bat-tools">${dup ? '' : `<button type="button" class="icon-btn" data-action="batch-remove" data-id="${id}" aria-label="Remove ${esc(t.title)}" title="Remove">${icon.trash}</button>`}</span>
+</li>`;
+}
+
+export function addedView(state) {
+  const jobs = state.batch.queue;
+  const head = '<div class="page-head"><div class="titles"><span class="eyebrow">// Add several</span><h1 class="display display-md">Just added</h1></div>';
+  if (!jobs.length) {
+    return `<div class="page page-added">${head}</div>
+<div class="empty-box"><p class="lead">Nothing waiting to be rated.</p><p class="set-text dim">In Scan, turn on Add several: every title you pick lands here.</p><button type="button" class="btn btn-primary" data-action="batch-more">${icon.radar}Scan</button></div>
+</div>`;
+  }
+  const live = jobs.filter((j) => j.state === 'ok' || j.state === 'dup').map((j) => state.titles.find((x) => x.id === j.titleId)).filter((t) => t && !t.deletedAt);
+  const rated = live.filter((t) => M.effectiveScore(t) !== null).length;
+  const adding = jobs.filter((j) => j.state === 'run' || j.state === 'wait').length;
+  const summary = [plural(live.length, 'title'), `${rated} rated`, adding ? `${adding} adding` : ''].filter(Boolean).join(' · ');
+  return `<div class="page page-added">${head}<span class="head-count">${esc(summary)}</span></div>
+<p class="set-text dim">Score them, fix a status, remove a wrong one: everything saves as you go. Completed counts as seen, date unknown; change it on the title's page.</p>
+<ol class="bat-list">${jobs.map((j) => batchRow(state, j)).join('')}</ol>
+<div class="actions"><button type="button" class="btn btn-primary" data-action="batch-done">Done</button><button type="button" class="btn btn-ghost" data-action="batch-more">${icon.radar}Add more</button></div>
 </div>`;
 }
 
@@ -1026,7 +1083,25 @@ export function scanResults(scan, titles) {
   }).join('')}</ul>`;
 }
 
-export function scanDialog(scan, titles) {
+// Add several: what was added from this Scan, newest first.
+export function scanTally(batch) {
+  const jobs = batch ? batch.queue : [];
+  const ok = jobs.filter((j) => j.state === 'ok').length;
+  const shown = jobs.slice(-8).reverse();
+  const mark = { ok: '✓', run: '', wait: '', fail: '!', dup: '' };
+  const why = (j) => (j.state === 'fail' ? `${j.title}: not added. ${j.error}` : j.state === 'dup' ? `${j.title} is already in your list` : j.state === 'ok' ? `${j.title} added` : `Adding ${j.title}`);
+  if (!jobs.length) return batch && batch.on ? '<p class="tally-hint">Each title you pick is added right away. Keep going, then Done.</p>' : '';
+  return `<div class="tally-head"><span class="eyebrow">// Added</span><span class="tally-count">${ok}</span></div>
+<ul class="tally">${shown.map((j) => `<li class="tally-chip is-${j.state === 'wait' ? 'run' : j.state}" title="${esc(why(j))}"><span class="tally-mark" aria-hidden="true">${mark[j.state] || ''}</span><span class="tally-name">${esc(j.title)}</span>${j.state === 'dup' ? '<span class="tally-tag" aria-hidden="true">in your list</span>' : ''}<span class="sr">: ${esc(j.state === 'ok' ? 'added' : j.state === 'fail' ? `not added, ${j.error}` : j.state === 'dup' ? 'already in your list' : 'adding')}</span></li>`).join('')}${jobs.length > shown.length ? `<li class="tally-more">+${jobs.length - shown.length}</li>` : ''}</ul>`;
+}
+
+export function scanFootButtons(scan, batch) {
+  const link = scan.mode === 'link';
+  const n = batch ? batch.queue.filter((j) => j.state !== 'fail').length : 0;
+  return `${link ? '' : '<button type="button" class="btn btn-dashed" data-action="scan-manual">Add it by hand</button>'}${!link && n ? `<button type="button" class="btn btn-primary" data-action="scan-done" id="scan-done">Done · review ${n}</button>` : ''}<button type="button" class="btn btn-ghost" data-action="dlg-close">Close</button>`;
+}
+
+export function scanDialog(scan, titles, batch) {
   const link = scan.mode === 'link';
   return `<div class="dlg-form scan" data-scan>
 <div class="dlg-head"><span class="eyebrow">// Scan</span><h2 class="dlg-title" id="dlg-title">${link ? `Find ${esc(scan.linkTitle)}` : 'Add a title'}</h2></div>
@@ -1035,8 +1110,10 @@ ${link ? '<p class="dlg-note">Pick the right one: posters, episodes, dates and c
 <div class="search scan-search">${icon.search}<label class="sr" for="scan-q">Search</label><input id="scan-q" type="search" name="q" value="${esc(scan.query)}" placeholder="${scan.sources.includes('tmdb') && scan.sources.includes('rawg') ? 'Movie, TV show, anime or game' : scan.sources.includes('rawg') ? 'Game' : 'Movie, TV show or anime'}" spellcheck="false"></div>
 ${link ? '' : `<label class="sr" for="scan-status">Status</label><select id="scan-status" class="select" name="status">${M.STATUSES.map((s) => `<option value="${s}"${s === scan.status ? ' selected' : ''}>${M.STATUS_LABEL[s]}</option>`).join('')}</select>`}
 </form>
+${link ? '' : `<div class="scan-multi"><label class="switch switch-sm"><input type="checkbox" role="switch" id="scan-multi"${batch && batch.on ? ' checked' : ''}><span class="switch-ui" aria-hidden="true"></span>Add several</label><span class="scan-multi-note">Stay here and keep adding, rate them all after.</span></div>`}
 <div class="scan-results" id="scan-results" aria-live="polite">${scanResults(scan, titles)}</div>
-<div class="dlg-actions scan-foot"><span class="scan-credit">Search by ${scan.sources.map((x) => x === 'tmdb' ? '<a href="https://www.themoviedb.org" target="_blank" rel="noopener">TMDB</a>' : '<a href="https://rawg.io" target="_blank" rel="noopener">RAWG</a>').join(' · ')}</span><span class="actions">${link ? '' : '<button type="button" class="btn btn-dashed" data-action="scan-manual">Add it by hand</button>'}<button type="button" class="btn btn-ghost" data-action="dlg-close">Close</button></span></div>
+${link ? '' : `<div class="scan-tally" id="scan-tally" aria-live="polite">${scanTally(batch)}</div>`}
+<div class="dlg-actions scan-foot"><span class="scan-credit">Search by ${scan.sources.map((x) => x === 'tmdb' ? '<a href="https://www.themoviedb.org" target="_blank" rel="noopener">TMDB</a>' : '<a href="https://rawg.io" target="_blank" rel="noopener">RAWG</a>').join(' · ')}</span><span class="actions" id="scan-foot-btns">${scanFootButtons(scan, batch)}</span></div>
 </div>`;
 }
 

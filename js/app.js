@@ -46,9 +46,13 @@ const state = {
     tvKind: 'all',
     rescanning: null,
     heroId: null,
-    heroDir: null
+    heroDir: null,
+    narrow: false,
+    cardStale: false
   },
-  imp: null
+  imp: null,
+  // Add several: what this Scan session added, in order. Lives until Done on the review page.
+  batch: { on: false, queue: [], manual: false }
 };
 
 const importDefaults = (kind = '') => ({ step: 'paste', kind, text: '', useTags: true, items: [], matching: false, noKey: false, done: 0, total: 0, current: '', results: null, changeId: null, changeQuery: '', changeResults: null, changeLoading: false });
@@ -56,6 +60,11 @@ state.imp = importDefaults();
 state.guide = { step: 0, tmdb: { state: '', msg: '' }, rawg: { state: '', msg: '' } };
 state.friends = [];
 state.folder = { supported: typeof window.showDirectoryPicker === 'function', name: '', granted: false, handle: null };
+
+// Phones and tablets held upright: the poster wall picks its default size from this.
+const narrowMq = window.matchMedia ? window.matchMedia('(max-width: 759px)') : null;
+state.ui.narrow = Boolean(narrowMq && narrowMq.matches);
+if (narrowMq && narrowMq.addEventListener) narrowMq.addEventListener('change', (e) => { state.ui.narrow = e.matches; if (state.ready) requestRender(); });
 
 const byId = (id) => state.titles.find((t) => t.id === id) || null;
 const cur = () => state.current;
@@ -78,6 +87,7 @@ function view() {
   if (r.name === 'import') return V.importView(state);
   if (r.name === 'friend') return V.friendView(state, friendById(r.id));
   if (r.name === 'guides') return V.guidesView(state);
+  if (r.name === 'added') return V.addedView(state);
   return V.notFoundView();
 }
 
@@ -91,6 +101,7 @@ function render() {
   const hadFocus = active && active !== document.body && root.contains(active) ? active.id : '';
   const focusAfter = state.ui.focusAfter;
   state.ui.focusAfter = null;
+  state.ui.cardStale = state.ready && !state.error ? cardStale() : false;
 
   root.classList.toggle('spoiler-on', Boolean(state.settings.spoiler));
   root.classList.toggle('scan-off', !state.settings.scanlines);
@@ -157,6 +168,7 @@ function parseRoute() {
   if (parts[0] === 'welcome') return { name: 'welcome' };
   if (parts[0] === 'tv-mode') return { name: 'tv', section: parts[1] || 'top' };
   if (parts[0] === 'guides') return { name: 'guides' };
+  if (parts[0] === 'added') return { name: 'added' };
   if (parts[0] === 'friend' && parts[1]) return { name: 'friend', id: parts[1] };
   return { name: 'notfound' };
 }
@@ -210,7 +222,7 @@ function onRoute() {
       : r.name === 'browse' ? `${r.kind === 'all' ? 'All' : M.KIND_TAB[r.kind]} · Rewinder`
         : r.name === 'settings' ? 'Settings · Rewinder' : r.name === 'import' ? 'Import · Rewinder' : r.name === 'welcome' ? 'Welcome · Rewinder'
           : r.name === 'friend' && friendById(r.id) ? `${friendById(r.id).name} · Rewinder`
-            : r.name === 'tv' ? 'TV mode · Rewinder' : r.name === 'guides' ? 'Guides · Rewinder' : 'Rewinder';
+            : r.name === 'tv' ? 'TV mode · Rewinder' : r.name === 'guides' ? 'Guides · Rewinder' : r.name === 'added' ? 'Just added · Rewinder' : 'Rewinder';
   if (t) loadHistory(t.id);
 }
 
@@ -341,7 +353,14 @@ async function commitScoreNow(t, key, before, after, describe) {
   }
 }
 
+let cardRev = 0;
+let staleTimer = null;
+
 function countChange() {
+  cardRev++;
+  // The Friends dot follows: a render only when your card goes from up to date to changed, or back.
+  clearTimeout(staleTimer);
+  staleTimer = setTimeout(() => { if (state.ready && !state.error && cardStale() !== state.ui.cardStale) requestRender(); }, 250);
   state.settings.changesSinceBackup = (state.settings.changesSinceBackup || 0) + 1;
   clearTimeout(settingsTimer);
   settingsTimer = setTimeout(() => { settingsTimer = null; putSettingsNow().catch(console.error); }, 500);
@@ -460,6 +479,14 @@ function onDialogClosed() {
   if (dlg.open) return;
   stopScanSearch();
   dlg.innerHTML = '';
+  if (batchDialog) {
+    batchDialog = false;
+    batch.manual = false;
+    if (batch.on && batchWaiting() && state.route.name !== 'added') {
+      const n = batch.queue.filter((j) => j.state !== 'fail').length;
+      toast(`${n} added. Rate them all on one page.`, { action: { label: 'Review', run: () => go('#/added') }, timeout: 9000 });
+    }
+  }
   if (confirmResolve) {
     const resolve = confirmResolve;
     confirmResolve = null;
@@ -586,6 +613,20 @@ async function submitAdd(form) {
     const seasons = M.clampInt(data.get('seasons'), 0, 60, 1);
     const eps = M.clampInt(data.get('eps'), 0, 500, 12);
     for (let i = 1; i <= seasons; i++) t.seasons.push(M.makeSeason(i, eps));
+  }
+  if (batch.manual) {
+    batch.manual = false;
+    const seenMem = status === 'completed' ? M.markSeenUnknown(t) : '';
+    state.titles.push(t);
+    state.history[t.id] = [];
+    batch.queue.push({ key: 'hand:' + t.id, type: 'hand', id: 0, status, title: t.title, state: 'ok', titleId: t.id, error: '' });
+    countChange();
+    scan.status = status;
+    openScan(kind);
+    await persist(t);
+    await log(t, `Added by hand · ${M.STATUS_LABEL[status]}`);
+    await log(t, seenMem);
+    return;
   }
   const seen = status === 'completed' ? markSeenOnComplete(t) : '';
   state.titles.push(t);
@@ -847,6 +888,11 @@ async function commitRate(key, raw) {
     if (v === null) delete state.ui.homeScore[id];
     else state.ui.homeScore[id] = v;
     requestRender();
+    return;
+  }
+  if (key.startsWith('row:')) {
+    const one = byId(key.slice(4));
+    if (one && !one.deletedAt) await setTitleScore(one, v);
     return;
   }
   const t = cur();
@@ -1195,6 +1241,93 @@ function refreshScan() {
   if (box) box.innerHTML = V.scanResults(scan, state.titles);
 }
 
+/* ---------- add several ---------- */
+
+const batch = state.batch;
+// True while Scan (or its add-by-hand form) is open in add mode: closing it with titles waiting offers the review.
+let batchDialog = false;
+let batchRunning = false;
+
+function refreshTally() {
+  const box = document.getElementById('scan-tally');
+  if (box) box.innerHTML = V.scanTally(batch);
+  const foot = document.getElementById('scan-foot-btns');
+  if (foot) foot.innerHTML = V.scanFootButtons(scan, batch);
+}
+
+const batchWaiting = () => batch.queue.some((j) => j.state !== 'fail');
+const nextJob = () => batch.queue.find((j) => j.state === 'wait');
+
+function queueBatch(type, id, status, title, openId) {
+  const key = `${type}:${id}`;
+  if (batch.queue.some((j) => j.key === key && j.state !== 'fail')) return;
+  batch.queue = batch.queue.filter((j) => j.key !== key);
+  if (openId) {
+    const t = byId(openId);
+    batch.queue.push({ key, type, id, status, title: t ? t.title : title, state: 'dup', titleId: openId, error: '' });
+    return;
+  }
+  batch.queue.push({ key, type, id, status, title, state: 'wait', titleId: null, error: '' });
+  runBatch();
+}
+
+// One scan at a time, in the background: the search box stays free for the next title.
+async function runBatch() {
+  if (batchRunning) return;
+  batchRunning = true;
+  try {
+    for (let job = nextJob(); job; job = nextJob()) {
+      job.state = 'run';
+      refreshTally();
+      requestRender();
+      try {
+        const data = await fetchScan(job.type, job.id, false, () => {});
+        const already = M.live(state.titles).find((t) => (data.source === 'rawg' ? t.rawgId === data.rawgId : t.tmdbId === data.tmdbId && t.tmdbType === data.tmdbType));
+        if (already) {
+          Object.assign(job, { state: 'dup', titleId: already.id, title: already.title });
+        } else {
+          const t = M.newTitle({ kind: data.kind, status: job.status });
+          M.mergeScan(t, data);
+          const seen = job.status === 'completed' ? M.markSeenUnknown(t) : '';
+          state.titles.push(t);
+          state.history[t.id] = [];
+          countChange();
+          Object.assign(job, { state: 'ok', titleId: t.id, title: t.title });
+          await persist(t);
+          await log(t, `Added with Scan · ${M.STATUS_LABEL[job.status]}`);
+          await log(t, seen);
+        }
+      } catch (err) {
+        Object.assign(job, { state: 'fail', error: err && err.message ? err.message : 'The scan failed.' });
+      }
+      refreshTally();
+      requestRender();
+    }
+  } finally {
+    batchRunning = false;
+  }
+}
+
+// The review page of Add several: a status from memory, so Completed means seen, date unknown.
+async function setStatusOf(t, value) {
+  if (!t || t.deletedAt || !M.STATUSES.includes(value) || value === t.status) return;
+  const before = t.status;
+  t.status = value;
+  const seen = value === 'completed' ? M.markSeenUnknown(t) : '';
+  requestRender();
+  await commit(t, `Status · ${M.STATUS_LABEL[before]} → ${M.STATUS_LABEL[value]}`);
+  await log(t, seen);
+}
+
+async function batchRemove(id) {
+  const t = byId(id);
+  if (!t || t.deletedAt) return;
+  t.deletedAt = new Date().toISOString();
+  render();
+  toast(`${t.title} moved to the trash`, { action: { label: 'Undo', run: () => restoreTitle(t.id, false) }, timeout: 8000 });
+  await commit(t, 'Moved to the trash');
+}
+
 function openScan(kind, link) {
   const k = link ? link.kind : kindFromPage(kind);
   const keys = { tmdb: state.settings.tmdbKey, rawg: state.settings.rawgKey };
@@ -1219,10 +1352,11 @@ function openScan(kind, link) {
     loading: false,
     error: '',
     busy: '',
-    status: 'watchlist',
+    status: !link && batch.on ? scan.status : 'watchlist',
     kindHint: k
   });
-  openDialog(V.scanDialog(scan, state.titles), '#scan-q');
+  openDialog(V.scanDialog(scan, state.titles, batch), '#scan-q');
+  batchDialog = !link;
   const input = document.getElementById('scan-q');
   if (input) input.select();
   if (scan.query) runSearch();
@@ -1283,18 +1417,33 @@ async function addAnimeGenres(data) {
   if (genres) data.genres = genres;
 }
 
-async function fetchScan(type, id, wantAnime) {
+const showScanStep = (step) => { scan.busy = step; refreshScan(); };
+
+async function fetchScan(type, id, wantAnime, onStep = showScanStep) {
   if (type === 'game') return rawg.fetchGame(id, state.settings.rawgKey);
-  const data = await tmdb.fetchTitle(type, id, state.settings.tmdbKey, (step) => { scan.busy = step; refreshScan(); });
+  const data = await tmdb.fetchTitle(type, id, state.settings.tmdbKey, onStep);
   if (data.tmdbType === 'tv' && (data.kind === 'anime' || wantAnime)) {
-    scan.busy = 'Reading anime genres…';
-    refreshScan();
+    onStep('Reading anime genres…');
     await addAnimeGenres(data);
   }
   return data;
 }
 
 async function pickScan(type, id, openId) {
+  if (scan.mode === 'add' && batch.on) {
+    if (!['movie', 'tv', 'game'].includes(type) || !Number.isInteger(id)) return;
+    const statusBox = document.getElementById('scan-status');
+    const status = statusBox && M.STATUSES.includes(statusBox.value) ? statusBox.value : 'watchlist';
+    const r = scan.results.find((x) => x.type === type && x.id === id);
+    queueBatch(type, id, status, r ? r.title : 'Untitled', openId);
+    stopScanSearch();
+    Object.assign(scan, { query: '', results: [], notes: [], loading: false, error: '' });
+    refreshScan();
+    refreshTally();
+    const input = document.getElementById('scan-q');
+    if (input) { input.value = ''; input.focus(); }
+    return;
+  }
   if (openId) {
     closeDialog();
     go('#/title/' + encodeURIComponent(openId));
@@ -1891,22 +2040,79 @@ function downloadJson(data, name) {
 
 const fileSlug = (name) => String(name).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'me';
 
+// Phones get the share menu (Messenger, Discord, texts). Chromium only shares a few file types: .txt is one, .json is not.
+function canShareFiles() {
+  try {
+    return Boolean(navigator.canShare && window.matchMedia && window.matchMedia('(pointer: coarse)').matches
+      && navigator.canShare({ files: [new File(['{}'], 'card.txt', { type: 'text/plain' })] }));
+  } catch {
+    return false;
+  }
+}
+
+// Has your list changed since the card you last shared? Only asked once you've shared one.
+let cardMemo = { rev: -1, list: null, name: null, sig: '' };
+function cardStale() {
+  const s = state.settings;
+  if (!s.shareRemind || !s.cardSharedSig || !s.cardName) return false;
+  if (cardMemo.rev !== cardRev || cardMemo.list !== state.titles || cardMemo.name !== s.cardName) {
+    cardMemo = { rev: cardRev, list: state.titles, name: s.cardName, sig: M.cardSignature(state.titles, s.cardName) };
+  }
+  return cardMemo.sig !== s.cardSharedSig;
+}
+
+async function markCardShared(sig) {
+  state.settings.cardSharedSig = sig;
+  state.settings.cardSharedAt = new Date().toISOString();
+  requestRender();
+  await saveSettings();
+}
+
 async function shareCard() {
   const field = document.getElementById('card-name');
   if (field && field.value.trim() !== (state.settings.cardName || '')) state.settings.cardName = field.value.trim().slice(0, 40);
   const name = (state.settings.cardName || '').trim();
   if (!name) {
+    if (!field) toggleFriends(true);
     toast('Add your name first: your friends see it on your card.');
-    if (field) field.focus();
+    const box = document.getElementById('card-name');
+    if (box) box.focus();
     return;
   }
   if (!state.settings.cardId) state.settings.cardId = 'card-' + M.uid();
-  await saveSettings();
   flushSaves();
   const card = M.makeCard(state.titles, { id: state.settings.cardId, name });
-  const file = `rewinder-card-${fileSlug(name)}.json`;
-  downloadJson(card, file);
-  toast(`Card saved as ${file}. Send it to your friends.`);
+  const sig = M.cardSignature(state.titles, name);
+  const slug = fileSlug(name);
+  if (canShareFiles()) {
+    // No await before this: the share menu only opens while the tap still counts.
+    const file = new File([JSON.stringify(card)], `rewinder-card-${slug}.txt`, { type: 'text/plain' });
+    try {
+      await navigator.share({ files: [file], title: `${name} · Rewinder card` });
+      await markCardShared(sig);
+      toast('Card shared.');
+      return;
+    } catch (err) {
+      if (err && err.name === 'AbortError') { saveSettings(); return; }
+      console.warn('The share menu refused the card; saving it instead.', err);
+    }
+  }
+  const fileName = `rewinder-card-${slug}.json`;
+  downloadJson(card, fileName);
+  await markCardShared(sig);
+  toast(`Card saved as ${fileName}. Send it to your friends.`);
+}
+
+// Once a day at most, when the card your friends have is older than your list.
+function nudgeShare() {
+  if (!cardStale() || state.route.name === 'tv' || state.route.name === 'welcome') return;
+  const day = 20 * 3600e3;
+  const last = Date.parse(state.settings.shareNudgeAt || '') || 0;
+  const shared = Date.parse(state.settings.cardSharedAt || '') || 0;
+  if (Date.now() - last < day || Date.now() - shared < day) return;
+  state.settings.shareNudgeAt = new Date().toISOString();
+  saveSettings();
+  toast('Your list changed since you shared your card.', { action: { label: 'Share', run: () => shareCard() }, timeout: 12000 });
 }
 
 function pickCard() {
@@ -1989,7 +2195,7 @@ async function addFromFriend(index) {
   const key = t.rawgId ? state.settings.rawgKey : state.settings.tmdbKey;
   if (!id || !key) return;
   try {
-    const data = await fetchScan(type, id, t.kind === 'anime');
+    const data = await fetchScan(type, id, t.kind === 'anime', () => {});
     if (t.deletedAt) return;
     M.mergeScan(t, data);
     t.status = 'watchlist';
@@ -2251,7 +2457,22 @@ function registerWorker() {
 const actions = {
   add: (el) => openScan(el.dataset.kind),
   'scan-pick': (el) => pickScan(el.dataset.type, Number(el.dataset.id), el.dataset.open),
-  'scan-manual': () => openAdd(scan.kindHint, scan.query.trim()),
+  'scan-manual': () => { batch.manual = scan.mode === 'add' && batch.on; openAdd(scan.kindHint, scan.query.trim()); },
+  'scan-done': () => { batchDialog = false; closeDialog(); go('#/added'); },
+  'batch-done': () => {
+    batch.queue = batch.queue.filter((j) => j.state === 'run' || j.state === 'wait');
+    go('#/');
+  },
+  'batch-more': () => { batch.on = true; openScan(); },
+  'batch-remove': (el) => batchRemove(el.dataset.id),
+  'batch-retry': (el) => {
+    const j = batch.queue.find((x) => x.key === el.dataset.key);
+    if (!j || j.state !== 'fail') return;
+    Object.assign(j, { state: 'wait', error: '' });
+    render();
+    runBatch();
+  },
+  'guides-open': (el) => { state.ui.guideTab = el.dataset.tab || null; go('#/guides'); },
   rescan: () => rescan(),
   'dlg-close': () => closeDialog(),
   'confirm-yes': () => {
@@ -2342,7 +2563,9 @@ const actions = {
     go('#/list');
   },
   'browse-view': async (el) => {
-    state.settings.browseView = el.dataset.view === 'list' ? 'list' : 'wall';
+    const v = el.dataset.view;
+    state.settings.browseView = v === 'list' ? 'list' : 'wall';
+    if (v === 'small' || v === 'large') state.settings.wallSize = v;
     render();
     await saveSettings();
   },
@@ -2514,6 +2737,15 @@ document.addEventListener('change', (e) => {
   const el = e.target;
   if (el === importInput) { importBackup(el.files && el.files[0]).catch(fail); return; }
   if (el === cardInput) { readCardFile(el.files && el.files[0]).catch(fail); return; }
+  if (el.id === 'scan-multi') {
+    batch.on = el.checked;
+    refreshTally();
+    const q = document.getElementById('scan-q');
+    if (q) q.focus();
+    return;
+  }
+  if (el.id === 'scan-status') { scan.status = M.STATUSES.includes(el.value) ? el.value : 'watchlist'; return; }
+  if (el.dataset.batchStatus !== undefined) { setStatusOf(byId(el.dataset.batchStatus), el.value).catch(fail); return; }
   if (el.dataset.rate !== undefined) { commitRate(el.dataset.rate, el.value).catch(fail); return; }
   if (el.dataset.epCheck) { setEpisodeWatched(el.dataset.epCheck, el.checked).catch(fail); return; }
   if (el.dataset.filter) {
@@ -2536,6 +2768,7 @@ document.addEventListener('change', (e) => {
   if (el.dataset.setting) {
     const name = el.dataset.setting;
     if (name === 'scanlines') state.settings.scanlines = el.checked;
+    else if (name === 'tvButton' || name === 'shareRemind') state.settings[name] = el.checked;
     else if (name === 'accent' && M.isHexColor(el.value)) state.settings.accent = el.value;
     else if (name === 'cardName') state.settings.cardName = el.value.trim().slice(0, 40);
     else if (name === 'tmdbKey' || name === 'rawgKey') {
@@ -2638,11 +2871,12 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey || dlg.open) return;
   const tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : '';
   if (['input', 'textarea', 'select'].includes(tag) || (e.target && e.target.isContentEditable)) return;
-  const box = document.getElementById('q-head') || document.getElementById('q-list');
-  if (box) {
-    e.preventDefault();
-    box.focus();
-  }
+  // The header search folds into an icon on smaller screens: then / opens the Full List's search.
+  const head = document.getElementById('q-head');
+  const box = head && head.offsetParent !== null ? head : document.getElementById('q-list');
+  e.preventDefault();
+  if (box) box.focus();
+  else { state.ui.focusAfter = 'q-list'; go('#/list'); }
 });
 
 window.addEventListener('hashchange', onRoute);
@@ -2681,6 +2915,7 @@ async function start() {
       .catch((err) => console.warn('Could not fill who made the titles', err));
     autoFolderBackup().catch((err) => console.warn('Folder backup failed', err));
   }, 2500);
+  setTimeout(nudgeShare, 4000);
 }
 
 start();

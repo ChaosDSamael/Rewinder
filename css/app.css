@@ -940,3 +940,97 @@ body.tv-mode .skip { display: none; }
   .gd-step { padding: 16px 16px 16px 52px; }
   .gd-step::before { left: 16px; top: 16px; }
 }
+
+/* ---------- 1.7: your card, the TV button, the wall, add several ---------- */
+
+/* Your card changed since you shared it: a dot on Friends. */
+.friends-btn .ping-card { top: auto; bottom: 6px; right: 6px; }
+.fp-stale { margin: 0; display: flex; align-items: center; gap: 10px; font-size: 13px; line-height: 1.4; color: var(--text-2); }
+.ping-inline { flex: 0 0 8px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 22%, transparent); }
+
+/* The poster wall takes the screen; two sizes. */
+.page-wall { max-width: 2400px; }
+.wall-lg { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 30px 20px; }
+
+/* Scan: add several. */
+.scan-multi { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin-top: -4px; }
+.switch-sm { gap: 10px; min-height: 36px; font-size: 14px; }
+.switch-sm .switch-ui { flex-basis: 36px; width: 36px; height: 20px; }
+.switch-sm .switch-ui::after { width: 14px; height: 14px; }
+.switch-sm input:checked + .switch-ui::after { transform: translateX(16px); }
+.scan-multi-note { font-size: 12px; color: var(--dim); }
+.scan-tally:empty { display: none; }
+.scan-tally { display: flex; flex-direction: column; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line-2); }
+.tally-head { display: flex; align-items: baseline; gap: 10px; }
+.tally-count { font-family: var(--mono); font-size: 13px; color: var(--accent); }
+.tally-hint { margin: 0; font-size: 13px; color: var(--muted); }
+.tally { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.tally-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 220px; min-height: 30px; padding: 0 10px; border: 1px solid var(--line-3); border-radius: 15px; font-size: 13px; color: var(--text-2); background: rgba(255, 255, 255, .03); }
+.tally-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tally-mark { flex: none; font-family: var(--mono); font-size: 12px; font-weight: 600; }
+.tally-chip.is-ok { border-color: var(--accent-line); }
+.tally-chip.is-ok .tally-mark { color: var(--accent); }
+.tally-chip.is-run .tally-mark { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: rw-blink 1s ease-in-out infinite; }
+.tally-chip.is-fail { border-color: rgba(224, 162, 59, .55); color: #E7B866; }
+.tally-chip.is-dup { color: var(--muted); border-style: dashed; }
+.tally-more { align-self: center; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+@keyframes rw-blink { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .tally-chip.is-run .tally-mark { animation: none; } }
+
+/* The page to rate what was just added. */
+.page-added { max-width: 1180px; }
+.bat-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.bat-row { display: grid; grid-template-columns: 46px minmax(0, 1fr) 170px auto 44px; align-items: center; gap: 10px 18px; padding: 10px 14px; background: var(--s1); border: 1px solid rgba(255, 255, 255, .07); border-radius: 6px; }
+.bat-thumb { position: relative; width: 46px; height: 69px; border: 1px solid var(--line-2); border-radius: 3px; overflow: hidden; background: rgba(255, 255, 255, .04); }
+.bat-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.bat-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.bat-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 15px; }
+a.bat-title:hover { color: var(--accent); }
+.bat-sub { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.bat-wait .bat-sub { color: var(--accent); }
+.bat-wait .bat-thumb { animation: rw-blink 1.2s ease-in-out infinite; }
+.bat-fail { border-color: rgba(224, 162, 59, .45); }
+.bat-fail .bat-sub { color: #E7B866; }
+.bat-tools { display: flex; justify-content: flex-end; }
+.bat-fail .bat-tools { grid-column: 3 / -1; }
+.page-added > .actions { justify-content: flex-start; }
+
+@media (max-width: 759px) {
+  .wall-sm { grid-template-columns: repeat(auto-fill, minmax(98px, 1fr)); gap: 18px 10px; }
+  .wall-sm .card { gap: 6px; }
+  .wall-sm .card-title { font-size: 12px; }
+  .wall-sm .card-meta { font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .page-list .filter-tools > [data-action="add"] { display: none; }
+  .wall-lg { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 22px 14px; }
+  .tab .ping-card { top: 8px; right: auto; left: calc(50% + 6px); }
+  .bat-row { grid-template-columns: 46px minmax(0, 1fr) 44px; grid-template-areas: "p m x" "p s s" "r r r"; gap: 8px 12px; }
+  .bat-thumb { grid-area: p; }
+  .bat-main { grid-area: m; }
+  .bat-status { grid-area: s; }
+  .bat-rate { grid-area: r; }
+  .bat-tools { grid-area: x; }
+  .bat-fail .bat-tools { grid-area: s; justify-content: flex-start; }
+  .scan-multi-note { flex-basis: 100%; }
+}
+
+/* Laptops: the header stays on one row. The search folds into an icon, then the name next to the logo goes. */
+@media (min-width: 760px) and (max-width: 1365px) {
+  .top .search { display: none; }
+  .top .search-icon { display: grid; }
+  .nav-link { padding: 0 9px; }
+}
+@media (min-width: 760px) and (max-width: 1439px) {
+  .top.has-tv .search { display: none; }
+  .top.has-tv .search-icon { display: grid; }
+}
+@media (min-width: 760px) and (max-width: 1199px) {
+  .brand span { display: none; }
+  .nav-link { padding: 0 7px; }
+}
+@media (min-width: 760px) and (max-width: 1099px) {
+  .top.has-tv { column-gap: 12px; }
+  .top.has-tv .nav-link { padding: 0 5px; }
+  .top.has-tv .tools { gap: 6px; }
+}
+.tally-tag { flex: none; font-family: var(--mono); font-size: 10.5px; letter-spacing: .04em; color: var(--dim); }
+.tally-chip.is-dup .tally-mark { display: none; }

@@ -1,5 +1,5 @@
 // Rewinder — offline support. Bump VERSION on every release so browsers pick up the new files.
-const VERSION = 'rewinder-1.6.1';
+const VERSION = 'rewinder-1.7.0';
 const SHELL = [
   './',
   './index.html',
