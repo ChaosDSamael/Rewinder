@@ -259,6 +259,9 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(.8); curs
 .table { min-width: 1060px; }
 .tr { display: grid; grid-template-columns: minmax(260px, 2.6fr) 80px 140px 150px 120px 90px 110px; gap: 16px; align-items: center; padding: 6px 18px; border-bottom: 1px solid rgba(255, 255, 255, .05); }
 .no-kind .tr { grid-template-columns: minmax(260px, 2.6fr) 140px 150px 120px 90px 110px; }
+.no-via .tr { grid-template-columns: minmax(260px, 2.6fr) 80px 140px 150px 120px 90px; }
+.no-kind.no-via .tr { grid-template-columns: minmax(260px, 2.6fr) 140px 150px 120px 90px; }
+.table.no-via { min-width: 940px; }
 .th { padding: 12px 18px; border-bottom: 1px solid rgba(255, 255, 255, .08); font-family: var(--mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
 .tbody { list-style: none; margin: 0; padding: 0; }
 .tbody .tr { transition: background .15s ease; }
@@ -392,6 +395,18 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(.8); curs
 .views li { display: inline-flex; align-items: stretch; min-height: 34px; padding-left: 10px; border: 1px solid var(--line-2); border-radius: 4px; font-family: var(--mono); font-size: 12px; color: var(--text-2); overflow: hidden; }
 .views li span { display: flex; align-items: center; }
 .views .x-btn { width: 30px; }
+.views li.editing { flex: 1 1 100%; padding: 4px 6px; }
+.views li.editing .x-btn { display: none; }
+.views li.editing .date-edit { flex: 1; }
+.date-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 4px 0 0; background: none; border: 0; color: inherit; font: inherit; cursor: pointer; }
+.date-btn .ico { width: 13px; height: 13px; opacity: .4; transition: opacity .15s ease; }
+.date-btn:hover .ico, .date-btn:focus-visible .ico { opacity: .9; }
+.date-btn:hover { color: var(--text); }
+.date-edit { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 4px 0; }
+.date-edit .input { width: auto; min-height: 32px; }
+.mark-dates { display: flex; flex-wrap: wrap; gap: 6px 22px; margin-top: 10px; font-family: var(--mono); font-size: 12px; color: var(--text-2); }
+.mark-date { display: inline-flex; align-items: center; gap: 10px; }
+.mark-date .label { margin: 0; }
 .timeline { list-style: none; margin: 0 0 0 4px; padding: 0 0 0 16px; border-left: 1px solid var(--line-3); display: flex; flex-direction: column; gap: 14px; }
 .timeline li { position: relative; display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
 .timeline li::before { content: ''; position: absolute; left: -21px; top: 6px; width: 9px; height: 9px; border-radius: 50%; background: #3A403E; }

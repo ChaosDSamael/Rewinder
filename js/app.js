@@ -35,6 +35,7 @@ const state = {
     addSeasonOpen: false,
     homeScore: {},
     focusAfter: null,
+    dateEdit: null,
     rescanning: null,
     heroId: null,
     heroDir: null
@@ -164,6 +165,7 @@ function onRoute() {
   if (!sameTitle) {
     state.ui.openEp = null;
     state.ui.addSeasonOpen = false;
+    state.ui.dateEdit = null;
     if (r.name === 'title') openDefaultSeason(byId(r.id));
   }
   render();
@@ -420,6 +422,8 @@ function closeDialog() {
 }
 
 function onDialogClosed() {
+  // The close event comes a moment after close(); if another dialog opened meanwhile, leave it alone.
+  if (dlg.open) return;
   stopScanSearch();
   dlg.innerHTML = '';
   if (confirmResolve) {
@@ -435,6 +439,14 @@ dlg.addEventListener('close', onDialogClosed);
 function ask(options) {
   return new Promise((resolve) => {
     openDialog(V.confirmDialog(options), '[data-action="confirm-no"]');
+    confirmResolve = resolve;
+  });
+}
+
+// Resolves with the value of the button picked, or false when the dialog is closed.
+function choose(options) {
+  return new Promise((resolve) => {
+    openDialog(V.choiceDialog(options), '.dlg-actions .btn-primary');
     confirmResolve = resolve;
   });
 }
@@ -541,6 +553,7 @@ async function submitAdd(form) {
     const eps = M.clampInt(data.get('eps'), 0, 500, 12);
     for (let i = 1; i <= seasons; i++) t.seasons.push(M.makeSeason(i, eps));
   }
+  const seen = status === 'completed' ? markSeenOnComplete(t) : '';
   state.titles.push(t);
   state.history[t.id] = [];
   closeDialog();
@@ -549,6 +562,8 @@ async function submitAdd(form) {
   countChange();
   await persist(t);
   await log(t, `Added · ${M.STATUS_LABEL[status]}`);
+  await log(t, seen);
+  if (status === 'completed') await offerCatchUp(t);
 }
 
 function openEdit() {
@@ -589,8 +604,66 @@ async function setStatus(value) {
   if (!t || !M.STATUSES.includes(value) || value === t.status) return;
   const before = t.status;
   t.status = value;
+  const seen = value === 'completed' ? markSeenOnComplete(t) : '';
   render();
   await commit(t, `Status · ${M.STATUS_LABEL[before]} → ${M.STATUS_LABEL[value]}`);
+  await log(t, seen);
+  if (value === 'completed') await offerCatchUp(t);
+}
+
+// Completed means seen: a movie gets a viewing, a game its story mark. Today; the date can be changed.
+function markSeenOnComplete(t) {
+  if (t.kind === 'movie' && !t.views.length) {
+    t.views.push({ date: M.today() });
+    return 'Seen ×1';
+  }
+  if (t.kind === 'game' && !t.game.story && !t.game.full) {
+    t.game.story = M.today();
+    return 'Finished the story';
+  }
+  return '';
+}
+
+// Waits until the title page of id is the one on screen (a new title opens a moment after it is added).
+function whenOnTitle(id) {
+  return new Promise((resolve) => {
+    let tries = 0;
+    const check = () => {
+      if (state.route.name === 'title' && state.route.id === id) resolve(true);
+      else if (++tries > 90) resolve(false);
+      else requestAnimationFrame(check);
+    };
+    check();
+  });
+}
+
+// A show set to Completed with aired episodes left unchecked: ask once, then check them.
+async function offerCatchUp(t) {
+  if (!M.hasEpisodes(t)) return;
+  const left = M.episodes(t).filter((x) => !x.ep.watched && M.isAired(x.ep));
+  if (!left.length || !(await whenOnTitle(t.id))) return;
+  const n = left.length;
+  const pick = await choose({
+    title: 'Mark the episodes watched?',
+    body: `${t.title} has ${n} aired episode${n === 1 ? '' : 's'} not checked yet.`,
+    choices: [
+      { value: 'none', label: 'Just the status' },
+      { value: 'unknown', label: 'Date unknown' },
+      { value: 'today', label: 'Today', primary: true }
+    ]
+  });
+  if ((pick !== 'today' && pick !== 'unknown') || t.status !== 'completed' || t.deletedAt) return;
+  const d = pick === 'today' ? M.today() : 'unknown';
+  let count = 0;
+  for (const x of left) {
+    if (!x.ep.watched) { x.ep.watched = d; count++; }
+  }
+  if (!count) return;
+  if (!t.views.length) t.views.push({ date: d });
+  const fresh = t.newSeason !== null ? M.findSeason(t, t.newSeason) : null;
+  if (fresh && fresh.episodes.some((e) => M.isAired(e))) t.newSeason = null;
+  render();
+  await commit(t, `Checked ${count} aired episode${count === 1 ? '' : 's'} · ${pick === 'today' ? 'today' : 'date unknown'}`);
 }
 
 async function toggleFav() {
@@ -898,6 +971,49 @@ async function setEpisodeField(key, field, value) {
 
 /* ---------- actions: games, platforms, tags ---------- */
 
+// key: view-<n> for a viewing, game-story or game-full for a game mark.
+async function setDate(key, value) {
+  const t = cur();
+  if (!t) return;
+  const date = value === 'unknown' ? 'unknown' : /^\d{4}-\d{2}-\d{2}$/.test(value || '') && value <= M.today() ? value : null;
+  if (!date) return;
+  const view = /^view-(\d+)$/.exec(key);
+  const mark = /^game-(story|full)$/.exec(key);
+  let line = '';
+  if (view && t.views[Number(view[1])]) {
+    const v = t.views[Number(view[1])];
+    if (v.date === date) return;
+    v.date = date;
+    line = `Viewing date · ${M.shownDate(date, true)}`;
+  } else if (mark && t.game && t.game[mark[1]]) {
+    if (t.game[mark[1]] === date) return;
+    t.game[mark[1]] = date;
+    line = `${mark[1] === 'story' ? 'Story' : '100%'} date · ${M.shownDate(date, true)}`;
+  } else {
+    return;
+  }
+  if (date === 'unknown') state.ui.dateEdit = null;
+  render();
+  await commit(t, line);
+}
+
+function editDate(key) {
+  state.ui.dateEdit = key;
+  state.ui.focusAfter = `de-${key}`;
+  render();
+}
+
+function closeDateEdit() {
+  if (!state.ui.dateEdit) return false;
+  const key = state.ui.dateEdit;
+  state.ui.dateEdit = null;
+  state.ui.focusAfter = null;
+  render();
+  const back = document.querySelector(`[data-action="date-edit"][data-key="${key}"]`);
+  if (back) back.focus();
+  return true;
+}
+
 async function toggleGameMark(mark) {
   const t = cur();
   if (!t || !['story', 'full'].includes(mark)) return;
@@ -1146,6 +1262,7 @@ async function pickScan(type, id, openId) {
   }
   const t = M.newTitle({ kind: data.kind, status });
   M.mergeScan(t, data);
+  const seen = status === 'completed' ? markSeenOnComplete(t) : '';
   state.titles.push(t);
   state.history[t.id] = [];
   closeDialog();
@@ -1154,6 +1271,8 @@ async function pickScan(type, id, openId) {
   countChange();
   await persist(t);
   await log(t, `Added with Scan · ${M.STATUS_LABEL[status]}`);
+  await log(t, seen);
+  if (status === 'completed') await offerCatchUp(t);
 }
 
 async function rescan() {
@@ -1778,6 +1897,12 @@ const actions = {
     if (resolve) resolve(true);
   },
   'confirm-no': () => closeDialog(),
+  choice: (el) => {
+    const resolve = confirmResolve;
+    confirmResolve = null;
+    closeDialog();
+    if (resolve) resolve(el.dataset.value);
+  },
   spoiler: async () => {
     state.settings.spoiler = !state.settings.spoiler;
     render();
@@ -1878,6 +2003,9 @@ const actions = {
   'ep-add': (el) => addEpisode(Number(el.dataset.n)),
   'ep-remove': (el) => removeEpisode(el.dataset.ep),
   'view-add': () => addView(),
+  'date-edit': (el) => editDate(el.dataset.key),
+  'date-unknown': (el) => setDate(el.dataset.key, 'unknown').catch(fail),
+  'date-close': () => closeDateEdit(),
   'view-remove': (el) => removeView(Number(el.dataset.i)),
   fav: () => toggleFav(),
   edit: () => openEdit(),
@@ -2029,6 +2157,7 @@ document.addEventListener('change', (e) => {
     commitEdited(t, `Edited the note on ${M.epCode(sn, en)}`).catch(fail);
     return;
   }
+  if (el.dataset.dateEdit) { setDate(el.dataset.dateEdit, el.value).catch(fail); return; }
   if (el.dataset.epField) setEpisodeField(el.dataset.ep, el.dataset.epField, el.value).catch(fail);
 });
 
@@ -2055,6 +2184,11 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && dlg.open && !e.defaultPrevented) {
     e.preventDefault();
     closeDialog();
+    return;
+  }
+  if (e.key === 'Escape' && state.ui.dateEdit && e.target && e.target.closest && e.target.closest('.date-edit')) {
+    e.preventDefault();
+    closeDateEdit();
     return;
   }
   if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && dlg.open && e.target && (e.target.id === 'scan-q' || e.target.classList.contains('scan-item'))) {

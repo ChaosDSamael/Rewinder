@@ -76,10 +76,10 @@ export const visor = `<svg class="visor" aria-hidden="true" focusable="false" vi
 </svg>`;
 
 // Poster: the real image when the Scan brought one, otherwise artwork drawn from the title.
-export function poster(t, { big = false, extra = '' } = {}) {
+export function poster(t, { big = false, extra = '', kind = true } = {}) {
   const img = t.poster ? `<img src="${esc(t.poster)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">` : '';
   return `<span class="poster${big ? ' poster-lg' : ''}${t.poster ? ' has-img' : ''}" style="background:${artFor(t)}">
-${img}<span class="badge">${KIND_SHORT[t.kind]}</span>${extra}${t.poster ? '' : `<span class="poster-title">${esc(t.title)}</span>`}
+${img}${kind ? `<span class="badge">${KIND_SHORT[t.kind]}</span>` : ''}${extra}${t.poster ? '' : `<span class="poster-title">${esc(t.title)}</span>`}
 </span>`;
 }
 

@@ -1,6 +1,6 @@
 // Rewinder — data helpers. Pure functions: no DOM, no storage.
 
-export const APP_VERSION = '1.4.0';
+export const APP_VERSION = '1.4.1';
 
 export const KINDS = ['movie', 'tv', 'anime', 'game'];
 export const KIND_LABEL = { movie: 'Movie', tv: 'TV Show', anime: 'Anime', game: 'Game' };

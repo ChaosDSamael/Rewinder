@@ -61,23 +61,26 @@ function cardMeta(t) {
   return bits.join(' · ');
 }
 
-export function card(t) {
+export function card(t, opts) {
+  const kind = !(opts && opts.kind === false);
   const p = M.progress(t);
   const bar = M.hasEpisodes(t) && t.status === 'progress' && p.total > 0;
   const meta = cardMeta(t);
   const extra = t.newSeason !== null ? `<span class="badge-new">S${t.newSeason} NEW</span>` : '';
-  return `<a class="card" data-key="c-${esc(t.id)}" href="${tHref(t)}" aria-label="${esc(`${t.title}, ${M.KIND_LABEL[t.kind]}${meta ? ', ' + meta : ''}`)}">${poster(t, { extra })}
+  return `<a class="card" data-key="c-${esc(t.id)}" href="${tHref(t)}" aria-label="${esc(`${t.title}, ${M.KIND_LABEL[t.kind]}${meta ? ', ' + meta : ''}`)}">${poster(t, { extra, kind })}
 ${bar ? `<span class="bar" aria-hidden="true"><span style="width:${Math.round((p.watched / p.total) * 100)}%"></span></span>` : ''}${t.poster ? `<span class="card-title">${esc(t.title)}</span>` : ''}<span class="card-meta">${esc(meta)}</span></a>`;
 }
 
+// The Via column shows up once someone in the list was recommended by a friend.
 export function titleTable(rows, { emptyText = '', showKind = true } = {}) {
-  return `<div class="table-wrap"><div class="table${showKind ? '' : ' no-kind'}">
-<div class="tr th" aria-hidden="true"><span>Title</span>${showKind ? '<span>Type</span>' : ''}<span>Status</span><span>Score</span><span>Progress</span><span>Last</span><span>Via</span></div>
-${rows.length ? `<ol class="tbody">${rows.map((t) => tableRow(t, showKind)).join('')}</ol>` : `<p class="empty">${esc(emptyText)}</p>`}
+  const showVia = rows.some((t) => t.via);
+  return `<div class="table-wrap"><div class="table${showKind ? '' : ' no-kind'}${showVia ? '' : ' no-via'}">
+<div class="tr th" aria-hidden="true"><span>Title</span>${showKind ? '<span>Type</span>' : ''}<span>Status</span><span>Score</span><span>Progress</span><span>Last</span>${showVia ? '<span>Via</span>' : ''}</div>
+${rows.length ? `<ol class="tbody">${rows.map((t) => tableRow(t, showKind, showVia)).join('')}</ol>` : `<p class="empty">${esc(emptyText)}</p>`}
 </div></div>`;
 }
 
-function tableRow(t, showKind) {
+function tableRow(t, showKind, showVia) {
   const score = M.effectiveScore(t);
   const sub = [t.titleQc, t.year, t.genres.slice(0, 2).join(', ')].filter(Boolean).join(' · ');
   return `<li class="tr" data-key="r-${esc(t.id)}">
@@ -87,7 +90,7 @@ ${showKind ? `<span class="c-kind">${M.KIND_SHORT[t.kind]}</span>` : ''}
 <span class="c-score">${miniStars(score)}<span>${M.fmtScore(score)}</span></span>
 <span class="c-prog">${esc(M.progressLabel(t))}</span>
 <span class="c-last">${esc(M.fmtDate(M.activity(t)))}</span>
-<span class="c-via">${esc(t.via)}</span>
+${showVia ? `<span class="c-via">${esc(t.via)}</span>` : ''}
 </li>`;
 }
 
@@ -248,7 +251,7 @@ export function browseView(state, kind) {
   const list = M.sortTitles(all, state.ui.browseSort);
   const body = !all.length
     ? `<div class="empty-box"><p class="lead">No ${KIND_PLURAL[kind]} yet.</p><button type="button" class="btn btn-primary" data-action="add" data-kind="${kind}">${icon.plus}Add ${A_KIND[kind]}</button></div>`
-    : view === 'wall' ? `<div class="wall">${list.map(card).join('')}</div>` : titleTable(list, { showKind: false });
+    : view === 'wall' ? `<div class="wall">${list.map((t) => card(t, { kind: false })).join('')}</div>` : titleTable(list, { showKind: false });
   return `<div class="page page-list">
 <div class="page-head"><div class="titles"><span class="eyebrow">// ${plural(all.length, 'title')}</span><h1 class="display display-md">${M.KIND_TAB[kind]}</h1></div>
 <div class="filter-tools">
@@ -377,15 +380,18 @@ ${form}
 </section>`;
 }
 
-function gameSection(t) {
+function gameSection(t, editing) {
   const plats = [...new Set([...(t.available.length ? t.available : M.GAME_PLATFORMS), ...t.platforms])];
   const mark = (key, label) => {
     const on = t.game[key];
-    return `<button type="button" class="mark${on ? ' on' : ''}" data-action="game-mark" data-mark="${key}" aria-pressed="${Boolean(on)}">${icon.check}<span class="mark-text"><b>${label}</b><small>${on ? (on === 'unknown' ? 'Done' : 'Done ' + esc(M.fmtDate(on, true))) : 'Not yet'}</small></span></button>`;
+    return `<button type="button" class="mark${on ? ' on' : ''}" data-action="game-mark" data-mark="${key}" aria-pressed="${Boolean(on)}">${icon.check}<span class="mark-text"><b>${label}</b><small>${on ? 'Done' : 'Not yet'}</small></span></button>`;
   };
+  const dates = [['story', 'Story'], ['full', '100%']].filter(([key]) => t.game[key])
+    .map(([key, label]) => `<span class="mark-date"><span class="label">${label}</span>${dateField(`game-${key}`, t.game[key], editing === `game-${key}`, `${label} date`)}</span>`).join('');
   return `<section class="sec" aria-labelledby="h-progress">
 <div class="sec-head"><h2 class="h2" id="h-progress"><span class="sq" aria-hidden="true"></span>Progress</h2></div>
 <div class="marks">${mark('story', 'Story')}${mark('full', '100%')}</div>
+${dates ? `<div class="mark-dates">${dates}</div>` : ''}
 <div class="field"><span class="label" id="lbl-played">Played on</span>
 <div class="chips" role="group" aria-labelledby="lbl-played">${plats.map((p) => `<button type="button" class="chip chip-sm" data-action="game-platform" data-p="${esc(p)}" aria-pressed="${t.platforms.includes(p)}">${esc(p)}</button>`).join('')}</div>
 <form class="inline-form inline-narrow" data-form="game-plat-add" autocomplete="off"><label class="sr" for="plat-other">Other platform</label><input id="plat-other" name="name" class="input input-sm" placeholder="Other platform" maxlength="40" data-keep><button type="submit" class="btn btn-dashed btn-sm">${icon.plus}Add</button></form>
@@ -432,14 +438,22 @@ function viaPanel(t, state) {
 </section>`;
 }
 
-function viewsPanel(t) {
+// A date shown as a small button; a click opens a date field with "Unknown" and "OK".
+function dateField(key, value, editing, label) {
+  if (editing) {
+    return `<span class="date-edit"><label class="sr" for="de-${key}">${esc(label)}</label><input id="de-${key}" type="date" class="input input-sm" data-date-edit="${key}" value="${value === 'unknown' ? '' : esc(value)}" max="${M.today()}"><button type="button" class="btn btn-ghost btn-sm" data-action="date-unknown" data-key="${key}">Unknown</button><button type="button" class="btn btn-primary btn-sm" data-action="date-close">OK</button></span>`;
+  }
+  return `<button type="button" class="date-btn" data-action="date-edit" data-key="${key}" aria-label="${esc(label)}: ${esc(M.shownDate(value, true))}. Change it">${esc(M.shownDate(value, true))}${icon.edit}</button>`;
+}
+
+function viewsPanel(t, editing) {
   const n = t.views.length;
   const firstEp = M.hasEpisodes(t) ? M.episodes(t).map((x) => x.ep.watched).filter((d) => /^\d/.test(d || '')).sort()[0] : null;
   const sub = n ? `Last ${M.shownDate(t.views[n - 1].date, true)}` : firstEp ? `Started ${M.fmtDate(firstEp, true)}` : 'Not seen yet';
   return `<section class="panel" aria-labelledby="h-views">
 <h2 class="panel-title" id="h-views">Watch count</h2>
 <div class="count-row"><span class="big-count">×${n}</span><span class="panel-sub">${esc(sub)}</span></div>
-${n ? `<ol class="views">${t.views.map((v, i) => `<li><span>${esc(M.shownDate(v.date, true))}</span><button type="button" class="x-btn" data-action="view-remove" data-i="${i}" aria-label="Remove the viewing of ${esc(M.shownDate(v.date, true))}">${icon.x}</button></li>`).join('')}</ol>` : ''}
+${n ? `<ol class="views">${t.views.map((v, i) => `<li${editing === `view-${i}` ? ' class="editing"' : ''}>${dateField(`view-${i}`, v.date, editing === `view-${i}`, `Viewing ${i + 1}`)}<button type="button" class="x-btn" data-action="view-remove" data-i="${i}" aria-label="Remove the viewing of ${esc(M.shownDate(v.date, true))}">${icon.x}</button></li>`).join('')}</ol>` : ''}
 <button type="button" class="btn btn-ghost btn-sm" data-action="view-add">${icon.plus}${n ? 'Seen again' : 'Seen it'}</button>
 </section>`;
 }
@@ -503,10 +517,10 @@ ${scanButton(t, state)}
 </section>
 <div class="cols">
 <div class="col-main">
-${series ? seasonsSection(t, state) : ''}${t.kind === 'game' ? gameSection(t) : ''}${castSection(t)}${notesSection(t, state)}
+${series ? seasonsSection(t, state) : ''}${t.kind === 'game' ? gameSection(t, state.ui.dateEdit) : ''}${castSection(t)}${notesSection(t, state)}
 </div>
 <aside class="col-aside" aria-label="Details">
-${providersPanel(t, state)}${viaPanel(t, state)}${t.kind === 'game' ? '' : viewsPanel(t)}${tagsPanel(t, state)}${historyPanel(state.history[t.id])}
+${providersPanel(t, state)}${viaPanel(t, state)}${t.kind === 'game' ? '' : viewsPanel(t, state.ui.dateEdit)}${tagsPanel(t, state)}${historyPanel(state.history[t.id])}
 <div class="aside-foot"><span>Added ${esc(M.fmtDate(t.createdAt, true))}${t.scannedAt ? ` · scanned ${esc(M.fmtDate(t.scannedAt))}` : ''}</span><button type="button" class="btn btn-ghost btn-sm btn-danger" data-action="trash">${icon.trash}Move to trash</button></div>
 </aside>
 </div>
@@ -655,6 +669,14 @@ export function confirmDialog({ title, body, yes = 'Confirm', danger = false }) 
 <div class="dlg-head"><h2 class="dlg-title" id="dlg-title">${esc(title)}</h2></div>
 <p class="dlg-text">${esc(body)}</p>
 <div class="dlg-actions"><button type="button" class="btn btn-ghost" data-action="confirm-no">Cancel</button><button type="button" class="btn ${danger ? 'btn-danger-solid' : 'btn-primary'}" data-action="confirm-yes">${esc(yes)}</button></div>
+</div>`;
+}
+
+export function choiceDialog({ title, body, choices }) {
+  return `<div class="dlg-form">
+<div class="dlg-head"><h2 class="dlg-title" id="dlg-title">${esc(title)}</h2></div>
+<p class="dlg-text">${esc(body)}</p>
+<div class="dlg-actions">${choices.map((c) => `<button type="button" class="btn ${c.primary ? 'btn-primary' : 'btn-ghost'}" data-action="choice" data-value="${esc(c.value)}">${esc(c.label)}</button>`).join('')}</div>
 </div>`;
 }
 
