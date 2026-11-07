@@ -18,6 +18,8 @@ export const icon = {
   heart: svg(`<path d="${HEART_PATH}"/>`),
   heartOn: svg(`<path d="${HEART_PATH}"/>`, { fill: 'currentColor' }),
   check: svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>', { size: 18, stroke: 2.4 }),
+  bust: svg('<circle cx="12" cy="8.2" r="3.7"/><path d="M4.6 20.2c.8-4 3.8-6.3 7.4-6.3s6.6 2.3 7.4 6.3"/>', { size: 22 }),
+  upload: svg('<path d="M12 20V9M7.5 13.5L12 9l4.5 4.5M5 4.5h14"/>', { size: 18 }),
   checkSm: svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>', { size: 12, stroke: 3 }),
   chevron: svg('<path d="M6 9l6 6 6-6"/>', { size: 18, stroke: 2, cls: 'chev' }),
   chevLeft: svg('<path d="M15 6l-6 6 6 6"/>', { size: 20, stroke: 2 }),

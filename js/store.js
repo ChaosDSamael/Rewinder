@@ -149,7 +149,8 @@ export async function exportAll() {
 }
 
 export function isBackup(data) {
-  return Boolean(data && data.app === 'rewinder' && Array.isArray(data.titles));
+  // A friend's card also lists titles: it must never pass for a backup and replace your list.
+  return Boolean(data && data.app === 'rewinder' && data.kind !== 'card' && Array.isArray(data.titles));
 }
 
 export async function importAll(data) {

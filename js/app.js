@@ -36,6 +36,9 @@ const state = {
     homeScore: {},
     focusAfter: null,
     dateEdit: null,
+    friendsOpen: false,
+    friendTab: 'common',
+    friendAll: false,
     rescanning: null,
     heroId: null,
     heroDir: null
@@ -46,6 +49,7 @@ const state = {
 const importDefaults = (kind = '') => ({ step: 'paste', kind, text: '', useTags: true, items: [], matching: false, noKey: false, done: 0, total: 0, current: '', results: null, changeId: null, changeQuery: '', changeResults: null, changeLoading: false });
 state.imp = importDefaults();
 state.guide = { step: 0, tmdb: { state: '', msg: '' }, rawg: { state: '', msg: '' } };
+state.friends = [];
 state.folder = { supported: typeof window.showDirectoryPicker === 'function', name: '', granted: false, handle: null };
 
 const byId = (id) => state.titles.find((t) => t.id === id) || null;
@@ -67,6 +71,7 @@ function view() {
   if (r.name === 'title') return state.current ? V.titleView(state, state.current) : V.notFoundView();
   if (r.name === 'settings') return V.settingsView(state);
   if (r.name === 'import') return V.importView(state);
+  if (r.name === 'friend') return V.friendView(state, friendById(r.id));
   return V.notFoundView();
 }
 
@@ -135,11 +140,13 @@ function parseRoute() {
   }
   if (!parts.length) return { name: 'home' };
   if (parts[0] === 'list') return { name: 'list' };
+  if (parts[0] === 'all') return { name: 'browse', kind: 'all' };
   if (M.PATH_KIND[parts[0]]) return { name: 'browse', kind: M.PATH_KIND[parts[0]] };
   if (parts[0] === 'title' && parts[1]) return { name: 'title', id: parts[1] };
   if (parts[0] === 'settings') return { name: 'settings' };
   if (parts[0] === 'import') return { name: 'import' };
   if (parts[0] === 'welcome') return { name: 'welcome' };
+  if (parts[0] === 'friend' && parts[1]) return { name: 'friend', id: parts[1] };
   return { name: 'notfound' };
 }
 
@@ -161,6 +168,11 @@ function onRoute() {
   const r = state.route;
   const sameTitle = prev.name === 'title' && r.name === 'title' && prev.id === r.id;
   if (dlg.open) closeDialog();
+  state.ui.friendsOpen = false;
+  if (!(prev.name === 'friend' && r.name === 'friend' && prev.id === r.id)) {
+    state.ui.friendTab = 'common';
+    state.ui.friendAll = false;
+  }
   state.ui.heroDir = null;
   if (!sameTitle) {
     state.ui.openEp = null;
@@ -179,8 +191,9 @@ function onRoute() {
   const t = state.current;
   document.title = r.name === 'title' && t ? `${t.title} · Rewinder`
     : r.name === 'list' ? 'Full List · Rewinder'
-      : r.name === 'browse' ? `${M.KIND_TAB[r.kind]} · Rewinder`
-        : r.name === 'settings' ? 'Settings · Rewinder' : r.name === 'import' ? 'Import · Rewinder' : r.name === 'welcome' ? 'Welcome · Rewinder' : 'Rewinder';
+      : r.name === 'browse' ? `${r.kind === 'all' ? 'All' : M.KIND_TAB[r.kind]} · Rewinder`
+        : r.name === 'settings' ? 'Settings · Rewinder' : r.name === 'import' ? 'Import · Rewinder' : r.name === 'welcome' ? 'Welcome · Rewinder'
+          : r.name === 'friend' && friendById(r.id) ? `${friendById(r.id).name} · Rewinder` : 'Rewinder';
   if (t) loadHistory(t.id);
 }
 
@@ -223,6 +236,8 @@ async function syncFromOtherWindow(msg) {
   } else if (msg.type === 'settings') {
     state.settings = await store.getSettings();
     applyTheme();
+  } else if (msg.type === 'friends') {
+    state.friends = await loadFriends();
   } else if (msg.type === 'all') {
     const fresh = await store.loadAll();
     state.titles = fresh.titles.map(M.normalizeTitle);
@@ -405,8 +420,9 @@ function toast(message, { action, timeout = 4500 } = {}) {
 let confirmResolve = null;
 let returnFocus = null;
 
-function openDialog(html, focusSelector) {
+function openDialog(html, focusSelector, look = '') {
   if (!dlg.open) returnFocus = document.activeElement;
+  dlg.className = look ? `dlg ${look}` : 'dlg';
   dlg.innerHTML = html;
   if (!dlg.open) {
     if (typeof dlg.showModal === 'function') dlg.showModal();
@@ -508,7 +524,7 @@ function autoStatus(t) {
 function kindFromPage(kind) {
   const r = state.route;
   if (M.KINDS.includes(kind)) return kind;
-  return r.name === 'browse' ? r.kind : '';
+  return r.name === 'browse' && M.KINDS.includes(r.kind) ? r.kind : '';
 }
 
 function openAdd(kind, title = '') {
@@ -590,6 +606,9 @@ async function submitEdit(form) {
   t.titleQc = String(data.get('titleQc') || '').trim().slice(0, 300);
   t.year = M.clampInt(data.get('year'), 1870, 2100, null);
   t.genres = M.splitList(data.get('genres'), 12);
+  const oldMakers = new Map((t.makers || []).map((x) => [x.name.toLowerCase(), x]));
+  const makers = M.splitList(data.get('makers'), 6).map((name) => oldMakers.get(name.toLowerCase()) || { name, role: M.makerRoleFor(kind) });
+  if (makers.length || t.makers) t.makers = makers;
   const oldCast = new Map(t.cast.map((c) => [c.name.toLowerCase(), c]));
   t.cast = M.splitList(data.get('cast'), 40).map((name) => oldCast.get(name.toLowerCase()) || { name, role: '' });
   t.overview = String(data.get('overview') || '').trim().slice(0, 4000);
@@ -646,14 +665,17 @@ async function offerCatchUp(t) {
   const pick = await choose({
     title: 'Mark the episodes watched?',
     body: `${t.title} has ${n} aired episode${n === 1 ? '' : 's'} not checked yet.`,
+    date: { label: 'Watched on', value: M.today(), max: M.today() },
     choices: [
       { value: 'none', label: 'Just the status' },
       { value: 'unknown', label: 'Date unknown' },
-      { value: 'today', label: 'Today', primary: true }
+      { value: 'date', label: 'Check them', primary: true }
     ]
   });
-  if ((pick !== 'today' && pick !== 'unknown') || t.status !== 'completed' || t.deletedAt) return;
-  const d = pick === 'today' ? M.today() : 'unknown';
+  if (typeof pick !== 'string' || pick === 'none' || t.status !== 'completed' || t.deletedAt) return;
+  const typed = pick.startsWith('date:') ? pick.slice(5) : '';
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(typed) && typed <= M.today() ? typed : pick === 'unknown' || pick.startsWith('date:') ? 'unknown' : null;
+  if (!d) return;
   let count = 0;
   for (const x of left) {
     if (!x.ep.watched) { x.ep.watched = d; count++; }
@@ -663,7 +685,7 @@ async function offerCatchUp(t) {
   const fresh = t.newSeason !== null ? M.findSeason(t, t.newSeason) : null;
   if (fresh && fresh.episodes.some((e) => M.isAired(e))) t.newSeason = null;
   render();
-  await commit(t, `Checked ${count} aired episode${count === 1 ? '' : 's'} · ${pick === 'today' ? 'today' : 'date unknown'}`);
+  await commit(t, `Checked ${count} aired episode${count === 1 ? '' : 's'} · ${M.shownDate(d, true)}`);
 }
 
 async function toggleFav() {
@@ -995,10 +1017,11 @@ async function setEpisodeField(key, field, value) {
     ep.aired = /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : '';
     requestRender();
     await commit(t, '');
-  } else if (field === 'watched' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+  } else if (field === 'watched' && ep.watched && (value === 'unknown' || (/^\d{4}-\d{2}-\d{2}$/.test(value) && value <= M.today()))) {
+    if (ep.watched === value) return;
     ep.watched = value;
     requestRender();
-    await commit(t, `${code} watched on ${M.fmtDate(value, true)}`);
+    await commit(t, value === 'unknown' ? `${code} · watched date unknown` : `${code} watched on ${M.fmtDate(value, true)}`);
   }
 }
 
@@ -1012,8 +1035,15 @@ async function setDate(key, value) {
   if (!date) return;
   const view = /^view-(\d+)$/.exec(key);
   const mark = /^game-(story|full)$/.exec(key);
+  const season = /^season-(\d+)$/.exec(key);
   let line = '';
-  if (view && t.views[Number(view[1])]) {
+  if (season && M.findSeason(t, Number(season[1]))) {
+    const s = M.findSeason(t, Number(season[1]));
+    const seen = s.episodes.filter((e) => e.watched && e.watched !== date);
+    if (!seen.length) return;
+    for (const e of seen) e.watched = date;
+    line = `${M.seasonName(s.n)} watched · ${M.shownDate(date, true)}`;
+  } else if (view && t.views[Number(view[1])]) {
     const v = t.views[Number(view[1])];
     if (v.date === date) return;
     v.date = date;
@@ -1734,6 +1764,41 @@ async function folderBackup(manual) {
   }
 }
 
+// Once per title, for titles scanned before Rewinder kept who made them. Quiet and slow;
+// a source that refuses or is down is left for the next opening.
+async function fillMakers() {
+  if (typeof navigator.onLine === 'boolean' && !navigator.onLine) return;
+  const todo = M.live(state.titles).filter((t) => t.makers === null);
+  const jobs = [
+    { key: state.settings.tmdbKey, list: todo.filter((t) => t.tmdbId && t.tmdbType), ask: (t, key) => tmdb.fetchMakers(t.tmdbType, t.tmdbId, key) },
+    { key: state.settings.rawgKey, list: todo.filter((t) => t.rawgId && t.kind === 'game'), ask: (t, key) => rawg.fetchStudios(t.rawgId, key) }
+  ];
+  let filled = 0;
+  for (const job of jobs) {
+    if (!job.key) continue;
+    for (const t of job.list) {
+      if (t.makers !== null || t.deletedAt) continue;
+      try {
+        t.makers = await job.ask(t, job.key);
+      } catch (err) {
+        if (!err || err.code !== 'notfound') break;
+        t.makers = [];
+      }
+      try {
+        await store.putTitle(t);
+        announce({ type: 'title', id: t.id });
+      } catch (err) {
+        console.warn('Could not save who made', t.title, err);
+        return;
+      }
+      filled++;
+      if (filled % 10 === 0) requestRender();
+      await sleep(200);
+    }
+  }
+  if (filled) requestRender();
+}
+
 // Once a day at most, and only when something changed. After a restart the
 // browser may want its OK again: a toast then asks for it, one click.
 async function autoFolderBackup() {
@@ -1778,21 +1843,159 @@ async function stopBackupFolder() {
   toast('Automatic folder backups stopped. The files already there stay.');
 }
 
+/* ---------- friends' cards ---------- */
+
+const cardInput = document.getElementById('card-file');
+const friendById = (id) => state.friends.find((f) => f.id === id) || null;
+
+async function loadFriends() {
+  let saved = null;
+  try { saved = await store.getMeta('friends'); } catch { saved = null; }
+  return (Array.isArray(saved) ? saved : []).filter((f) => f && Array.isArray(f.titles)).map((f) => ({ ...M.normalizeCard(f), loadedAt: f.loadedAt || null }));
+}
+
+async function saveFriends() {
+  await store.putMeta('friends', state.friends);
+  announce({ type: 'friends' });
+}
+
+function downloadJson(data, name) {
+  const blob = new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+const fileSlug = (name) => String(name).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'me';
+
+async function shareCard() {
+  const field = document.getElementById('card-name');
+  if (field && field.value.trim() !== (state.settings.cardName || '')) state.settings.cardName = field.value.trim().slice(0, 40);
+  const name = (state.settings.cardName || '').trim();
+  if (!name) {
+    toast('Add your name first: your friends see it on your card.');
+    if (field) field.focus();
+    return;
+  }
+  if (!state.settings.cardId) state.settings.cardId = 'card-' + M.uid();
+  await saveSettings();
+  flushSaves();
+  const card = M.makeCard(state.titles, { id: state.settings.cardId, name });
+  const file = `rewinder-card-${fileSlug(name)}.json`;
+  downloadJson(card, file);
+  toast(`Card saved as ${file}. Send it to your friends.`);
+}
+
+function pickCard() {
+  cardInput.value = '';
+  cardInput.click();
+}
+
+async function readCardFile(file) {
+  if (!file) return;
+  if (file.size > 5e6) { toast('That file is too big for a card.'); return; }
+  let data = null;
+  try { data = JSON.parse(await file.text()); } catch { data = null; }
+  if (M.isCard(data)) { await addCard(data); return; }
+  if (store.isBackup(data)) { toast('This is a backup, not a card. To use it, go to Settings → Restore a backup.'); return; }
+  toast('This file is not a Rewinder card.');
+}
+
+function acquired(f, c, replaced) {
+  return new Promise((resolve) => {
+    openDialog(V.acquiredDialog(f, c, replaced), '[data-action="choice"][data-value="compare"]', 'dlg-acq');
+    confirmResolve = resolve;
+  });
+}
+
+async function addCard(raw) {
+  const card = { ...M.normalizeCard(raw), loadedAt: new Date().toISOString() };
+  if (card.id === state.settings.cardId) { toast('That is your own card.'); return; }
+  const i = state.friends.findIndex((f) => f.id === card.id);
+  if (i >= 0 && Date.parse(state.friends[i].at) > Date.parse(card.at)) {
+    toast(`You already have a newer card from ${state.friends[i].name}.`);
+    return;
+  }
+  if (i >= 0) state.friends[i] = card;
+  else state.friends.push(card);
+  try {
+    await saveFriends();
+  } catch (err) {
+    console.error(err);
+    toast('Could not keep that card. The browser refused to store it.');
+    return;
+  }
+  state.ui.friendsOpen = false;
+  render();
+  const pick = await acquired(card, M.compareCard(state.titles, card), i >= 0);
+  if (pick === 'compare') go('#/friend/' + encodeURIComponent(card.id));
+}
+
+async function removeFriend(id) {
+  const f = friendById(id);
+  if (!f) return;
+  const ok = await ask({ title: `Remove ${f.name}?`, body: `${f.name}'s card leaves this device. Add it again any time.`, yes: 'Remove', danger: true });
+  if (!ok) return;
+  state.friends = state.friends.filter((x) => x.id !== id);
+  await saveFriends();
+  go('#/');
+  toast(`${f.name}'s card removed.`);
+}
+
+// A title from a friend's card, straight into your watchlist, "Recommended by" them.
+async function addFromFriend(index) {
+  const f = state.route.name === 'friend' ? friendById(state.route.id) : null;
+  if (!f) return;
+  const p = M.compareCard(state.titles, f).picks[index];
+  if (!p) return;
+  if (p.mine) { go('#/title/' + encodeURIComponent(p.mine.id)); return; }
+  const x = p.theirs;
+  const t = M.newTitle({ kind: x.kind, title: x.title, year: x.year, poster: x.poster, status: 'watchlist', via: f.name });
+  if (x.tmdb) { const [type, id] = x.tmdb.split(':'); t.tmdbType = type; t.tmdbId = Number(id); }
+  if (x.rawg) t.rawgId = x.rawg;
+  state.titles.push(t);
+  state.history[t.id] = [];
+  countChange();
+  await persist(t);
+  render();
+  toast(`${t.title} is in your watchlist.`, { action: { label: 'Open', run: () => go('#/title/' + encodeURIComponent(t.id)) } });
+  await log(t, `Added from ${f.name}'s card · Watchlist`);
+  // The rest (seasons, cast, where to watch) comes quietly when a key is there.
+  const type = t.rawgId ? 'game' : t.tmdbType;
+  const id = t.rawgId || t.tmdbId;
+  const key = t.rawgId ? state.settings.rawgKey : state.settings.tmdbKey;
+  if (!id || !key) return;
+  try {
+    const data = await fetchScan(type, id, t.kind === 'anime');
+    if (t.deletedAt) return;
+    M.mergeScan(t, data);
+    t.status = 'watchlist';
+    t.via = f.name;
+    await persist(t);
+    requestRender();
+  } catch (err) {
+    console.warn('Could not fill in', t.title, err);
+  }
+}
+
+function toggleFriends(open) {
+  state.ui.friendsOpen = typeof open === 'boolean' ? open : !state.ui.friendsOpen;
+  if (state.ui.friendsOpen) state.ui.focusAfter = state.friends.length ? null : 'card-name';
+  render();
+}
+
 /* ---------- backup ---------- */
 
 async function exportBackup() {
   flushSaves();
   try {
     const data = await store.exportAll();
-    const blob = new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `rewinder-backup-${M.today()}.json`;
-    document.body.append(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    downloadJson(data, `rewinder-backup-${M.today()}.json`);
     state.settings.lastBackupAt = new Date().toISOString();
     state.settings.changesSinceBackup = 0;
     state.settings.backupSnoozeUntil = null;
@@ -1932,9 +2135,11 @@ const actions = {
   'confirm-no': () => closeDialog(),
   choice: (el) => {
     const resolve = confirmResolve;
+    const field = dlg.querySelector('[data-choice-date]');
+    const value = el.dataset.value === 'date' ? `date:${field ? field.value : ''}` : el.dataset.value;
     confirmResolve = null;
     closeDialog();
-    if (resolve) resolve(el.dataset.value);
+    if (resolve) resolve(value);
   },
   spoiler: async () => {
     state.settings.spoiler = !state.settings.spoiler;
@@ -2037,6 +2242,19 @@ const actions = {
   'ep-remove': (el) => removeEpisode(el.dataset.ep),
   'view-add': () => addView(),
   'date-edit': (el) => editDate(el.dataset.key),
+  'friends-toggle': () => toggleFriends(),
+  'card-share': () => shareCard(),
+  'card-pick': () => pickCard(),
+  'friend-tab': (el) => {
+    state.ui.friendTab = el.dataset.tab;
+    state.ui.friendAll = false;
+    state.ui.focusAfter = `tab-${el.dataset.tab}`;
+    render();
+  },
+  'friend-all': () => { state.ui.friendAll = true; render(); },
+  'friend-add': (el) => addFromFriend(Number(el.dataset.i)),
+  'friend-remove': (el) => removeFriend(el.dataset.id),
+  'ep-unknown': (el) => setEpisodeField(el.dataset.ep, 'watched', 'unknown').catch(fail),
   'date-unknown': (el) => setDate(el.dataset.key, 'unknown').catch(fail),
   'date-close': () => closeDateEdit(),
   'view-remove': (el) => removeView(Number(el.dataset.i)),
@@ -2068,12 +2286,30 @@ const fail = (err) => {
 };
 
 document.addEventListener('click', (e) => {
+  if (state.ui.friendsOpen && !e.target.closest('.friends-wrap') && !dlg.open && document.contains(e.target)) {
+    state.ui.friendsOpen = false;
+    requestRender();
+  }
   const el = e.target.closest('[data-action]');
   if (!el || el.disabled) return;
   const fn = actions[el.dataset.action];
   if (!fn) return;
   e.preventDefault();
   Promise.resolve().then(() => fn(el, e)).catch(fail);
+});
+
+const hasFiles = (e) => Boolean(e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files'));
+window.addEventListener('dragover', (e) => { if (hasFiles(e)) e.preventDefault(); });
+window.addEventListener('drop', (e) => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  const file = e.dataTransfer.files && e.dataTransfer.files[0];
+  if (!file) return;
+  if (state.route.name === 'import' && /\.txt$/i.test(file.name)) {
+    file.text().then((text) => { state.imp.text = text; render(); }).catch(fail);
+    return;
+  }
+  readCardFile(file).catch(fail);
 });
 
 let listTimer = null;
@@ -2141,6 +2377,7 @@ document.addEventListener('input', (e) => {
 document.addEventListener('change', (e) => {
   const el = e.target;
   if (el === importInput) { importBackup(el.files && el.files[0]).catch(fail); return; }
+  if (el === cardInput) { readCardFile(el.files && el.files[0]).catch(fail); return; }
   if (el.dataset.rate !== undefined) { commitRate(el.dataset.rate, el.value).catch(fail); return; }
   if (el.dataset.epCheck) { setEpisodeWatched(el.dataset.epCheck, el.checked).catch(fail); return; }
   if (el.dataset.filter) {
@@ -2164,6 +2401,7 @@ document.addEventListener('change', (e) => {
     const name = el.dataset.setting;
     if (name === 'scanlines') state.settings.scanlines = el.checked;
     else if (name === 'accent' && M.isHexColor(el.value)) state.settings.accent = el.value;
+    else if (name === 'cardName') state.settings.cardName = el.value.trim().slice(0, 40);
     else if (name === 'tmdbKey' || name === 'rawgKey') {
       state.settings[name] = el.value.trim().slice(0, 400);
       toast(state.settings[name] ? 'Key saved in this browser.' : 'Key removed.');
@@ -2217,6 +2455,13 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && dlg.open && !e.defaultPrevented) {
     e.preventDefault();
     closeDialog();
+    return;
+  }
+  if (e.key === 'Escape' && state.ui.friendsOpen && !dlg.open) {
+    e.preventDefault();
+    state.ui.friendsOpen = false;
+    state.ui.focusAfter = 'friends-btn';
+    render();
     return;
   }
   if (e.key === 'Escape' && state.ui.dateEdit && e.target && e.target.closest && e.target.closest('.date-edit')) {
@@ -2275,12 +2520,16 @@ async function start() {
     history.replaceState(null, '', '#/welcome');
   }
   await loadBackupFolder();
+  if (!state.error) state.friends = await loadFriends();
   onRoute();
   registerWorker();
   state.persisted = await store.persist();
   if (state.route.name === 'settings') requestRender();
   setTimeout(() => {
-    checkNewSeasons().catch((err) => console.warn('Season check failed', err));
+    checkNewSeasons()
+      .catch((err) => console.warn('Season check failed', err))
+      .then(() => fillMakers())
+      .catch((err) => console.warn('Could not fill who made the titles', err));
     autoFolderBackup().catch((err) => console.warn('Folder backup failed', err));
   }, 2500);
 }

@@ -1,6 +1,6 @@
 // Rewinder — data helpers. Pure functions: no DOM, no storage.
 
-export const APP_VERSION = '1.4.3';
+export const APP_VERSION = '1.5.0';
 
 export const KINDS = ['movie', 'tv', 'anime', 'game'];
 export const KIND_LABEL = { movie: 'Movie', tv: 'TV Show', anime: 'Anime', game: 'Game' };
@@ -31,6 +31,8 @@ export const DEFAULT_SETTINGS = {
   backupSnoozeUntil: null,
   onboarded: false,
   seenFixed: false,
+  cardId: '',
+  cardName: '',
   lastSeasonCheck: null,
   folderBackupAt: null
 };
@@ -165,7 +167,7 @@ export function newTitle(fields = {}) {
     id: uid(), kind: 'movie', title: '', titleQc: '', year: null, genres: [], overview: '',
     poster: '', backdrop: '', status: 'watchlist', fav: false, score: null, notes: '',
     tags: [], via: '', views: [], platforms: [], game: { story: null, full: null },
-    seasons: [], cast: [], providers: [], newSeason: null,
+    seasons: [], cast: [], makers: null, providers: [], newSeason: null,
     tmdbId: null, tmdbType: '', watchLink: '', scannedAt: null, rawgId: null, rawgSlug: '', available: [],
     createdAt: now, updatedAt: now, lastActivity: now, deletedAt: null,
     ...fields
@@ -231,6 +233,8 @@ export function normalizeTitle(raw) {
       })) : []
     })).sort((a, b) => a.n - b.n) : [],
     cast: Array.isArray(r.cast) ? r.cast.filter((c) => c && c.name).slice(0, 40).map((c) => ({ name: String(c.name).slice(0, 120), role: String(c.role || '').slice(0, 120) })) : [],
+    // null: never asked (a title saved before Rewinder kept it); [] : asked, nobody listed.
+    makers: Array.isArray(r.makers) ? r.makers.filter((x) => x && x.name).slice(0, 6).map((x) => ({ name: String(x.name).slice(0, 120), role: MAKER_ROLES.includes(x.role) ? x.role : 'Director' })) : null,
     providers: Array.isArray(r.providers) ? r.providers.filter((p) => p && p.name).slice(0, 30).map((p) => {
       const source = ['tmdb', 'rawg'].includes(p.source) ? p.source : 'manual';
       return {
@@ -298,12 +302,17 @@ export function cleanProvider(name) {
   return n;
 }
 
+export const MAKER_ROLES = ['Director', 'Creator', 'Studio'];
+export const MAKER_LABEL = { Director: 'Directed by', Creator: 'Created by', Studio: 'Studio' };
+// The role a hand-typed name gets on this kind of title.
+export const makerRoleFor = (kind) => (kind === 'game' ? 'Studio' : kind === 'movie' ? 'Director' : 'Creator');
+
 export const platformsOf = (t) => [...(t.providers || []).map((p) => p.name), ...(t.kind === 'game' ? t.platforms || [] : [])];
 
 export function matches(t, needle) {
   const q = String(needle || '').trim().toLowerCase();
   if (!q) return true;
-  const hay = [t.title, t.titleQc, t.via, String(t.year || ''), ...(t.tags || []), ...(t.genres || []), ...(t.cast || []).map((c) => c.name), ...platformsOf(t)].join(' \u0001 ').toLowerCase();
+  const hay = [t.title, t.titleQc, t.via, String(t.year || ''), ...(t.tags || []), ...(t.genres || []), ...(t.cast || []).map((c) => c.name), ...(t.makers || []).map((x) => x.name), ...platformsOf(t)].join(' \u0001 ').toLowerCase();
   return q.split(/\s+/).every((word) => hay.includes(word));
 }
 
@@ -383,6 +392,7 @@ export function mergeScan(t, s) {
   if (s.poster) t.poster = s.poster;
   if (s.backdrop) t.backdrop = s.backdrop;
   if (s.cast.length) t.cast = s.cast;
+  if (Array.isArray(s.makers)) t.makers = s.makers;
   t.watchLink = s.watchLink || '';
   mergeProviders(t, s);
   return mergeSeasons(t, s);
@@ -429,4 +439,122 @@ export function mergeSeasons(t, s) {
   }
   t.seasons.sort((a, b) => a.n - b.n);
   return counts;
+}
+
+/* ---------- friends' cards ---------- */
+
+// Seen: anything past the watchlist, or anything with a score.
+export const isSeen = (status, score) => status !== 'watchlist' || typeof score === 'number';
+
+const plain = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+const kindClass = (kind) => (kind === 'game' ? 'g' : kind === 'movie' ? 'm' : 's');
+
+// How two lists can name the same title: its TMDB or RAWG number, then its name and year, then its name alone.
+function keysOf(x) {
+  const keys = [];
+  if (x.tmdb) keys.push('tmdb:' + x.tmdb);
+  if (x.rawg) keys.push('rawg:' + x.rawg);
+  const name = plain(x.title);
+  if (name) {
+    if (x.year) keys.push(`name:${kindClass(x.kind)}:${name}:${x.year}`);
+    keys.push(`name:${kindClass(x.kind)}:${name}`);
+  }
+  return keys;
+}
+
+const refOf = (t) => ({
+  kind: t.kind,
+  title: t.title,
+  year: t.year || null,
+  tmdb: t.tmdbId && t.tmdbType ? `${t.tmdbType}:${t.tmdbId}` : null,
+  rawg: t.rawgId || null
+});
+
+// Your card: scores, statuses, favorites and tags. Never notes, dates, history or recommendations.
+export function makeCard(titles, { id, name }) {
+  return {
+    app: 'rewinder',
+    kind: 'card',
+    format: 1,
+    id,
+    name,
+    at: new Date().toISOString(),
+    titles: live(titles).map((t) => {
+      const score = effectiveScore(t);
+      return {
+        ...refOf(t),
+        score: typeof score === 'number' ? Math.round(score * 10) / 10 : null,
+        status: t.status,
+        fav: Boolean(t.fav),
+        tags: t.tags || [],
+        poster: t.poster || ''
+      };
+    })
+  };
+}
+
+export const isCard = (d) => Boolean(d && d.app === 'rewinder' && d.kind === 'card' && Array.isArray(d.titles));
+
+export function normalizeCard(d) {
+  const at = typeof d.at === 'string' && !Number.isNaN(Date.parse(d.at)) ? new Date(d.at).toISOString() : new Date().toISOString();
+  return {
+    id: typeof d.id === 'string' && /^[\w-]{6,64}$/.test(d.id) ? d.id : 'card-' + uid(),
+    name: String(d.name || '').trim().slice(0, 40) || 'A friend',
+    at,
+    titles: d.titles.slice(0, 5000).filter((x) => x && typeof x.title === 'string' && x.title.trim()).map((x) => ({
+      kind: KINDS.includes(x.kind) ? x.kind : 'movie',
+      title: x.title.trim().slice(0, 300),
+      year: Number.isInteger(x.year) && x.year > 1800 && x.year < 2200 ? x.year : null,
+      tmdb: typeof x.tmdb === 'string' && /^(movie|tv):\d{1,9}$/.test(x.tmdb) ? x.tmdb : null,
+      rawg: Number.isInteger(x.rawg) && x.rawg > 0 ? x.rawg : null,
+      score: typeof x.score === 'number' && Number.isFinite(x.score) ? clampScore(x.score) : null,
+      status: STATUSES.includes(x.status) ? x.status : 'completed',
+      fav: x.fav === true,
+      tags: Array.isArray(x.tags) ? x.tags.filter((g) => typeof g === 'string' && g.trim()).slice(0, 12).map((g) => g.trim().slice(0, 60)) : [],
+      poster: isImage(x.poster) ? x.poster : ''
+    }))
+  };
+}
+
+// Your list against a friend's card: what you share, what they saw that you did not, where you disagree.
+export function compareCard(titles, card) {
+  const mine = live(titles);
+  const index = new Map();
+  for (const t of mine) for (const key of keysOf(refOf(t))) if (!index.has(key)) index.set(key, t);
+  const find = (x) => {
+    for (const key of keysOf(x)) if (index.has(key)) return index.get(key);
+    return null;
+  };
+  const common = [];
+  const picks = [];
+  const used = new Set();
+  for (const x of card.titles) {
+    if (!isSeen(x.status, x.score)) continue;
+    const t = find(x);
+    if (t && used.has(t.id)) continue;
+    const you = t ? effectiveScore(t) : null;
+    if (t && isSeen(t.status, you)) {
+      used.add(t.id);
+      const both = typeof you === 'number' && typeof x.score === 'number';
+      common.push({ mine: t, theirs: x, you, them: x.score, gap: both ? Math.round(Math.abs(you - x.score) * 10) / 10 : null });
+    } else {
+      picks.push({ mine: t, theirs: x });
+    }
+  }
+  const scored = common.filter((c) => c.gap !== null);
+  const within = scored.filter((c) => c.gap <= 1).length;
+  const total = (c) => (typeof c.you === 'number' ? c.you : 0) + (typeof c.them === 'number' ? c.them : 0);
+  common.sort((a, b) => total(b) - total(a) || a.theirs.title.localeCompare(b.theirs.title));
+  picks.sort((a, b) => (b.theirs.score ?? -1) - (a.theirs.score ?? -1) || a.theirs.title.localeCompare(b.theirs.title));
+  return {
+    common,
+    picks,
+    gaps: scored.filter((c) => c.gap >= 2).sort((a, b) => b.gap - a.gap),
+    scored: scored.length,
+    within,
+    agreement: scored.length ? Math.round((within / scored.length) * 100) : null,
+    myAvg: average(mine.map(effectiveScore)),
+    theirAvg: average(card.titles.map((x) => x.score)),
+    bothFav: common.filter((c) => c.mine.fav && c.theirs.fav).length
+  };
 }

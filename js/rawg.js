@@ -71,6 +71,13 @@ function cleanText(text) {
   return (end > 600 ? short.slice(0, end + 1) : short.trim() + '…');
 }
 
+// The studios that made it (RAWG calls them developers).
+const studiosOf = (g) => uniq(names(g.developers, (d) => d && d.name)).slice(0, 3).map((name) => ({ name: String(name), role: 'Studio' }));
+
+export async function fetchStudios(id, key) {
+  return studiosOf(await get(`/games/${id}`, {}, key));
+}
+
 export async function fetchGame(id, key) {
   const g = await get(`/games/${id}`, {}, key);
   let links = {};
@@ -104,6 +111,7 @@ export async function fetchGame(id, key) {
     poster: sized(g.background_image, 640),
     backdrop: sized(g.background_image_additional || g.background_image, 1280),
     cast: [],
+    makers: studiosOf(g),
     providers: providers.slice(0, 10),
     watchLink: '',
     available: uniq(names(g.platforms, (p) => p && p.platform && (PLATFORM[p.platform.name] || p.platform.name))).slice(0, 12),

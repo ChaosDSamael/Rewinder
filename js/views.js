@@ -9,10 +9,61 @@ const SORTS = [['recent', 'Recent activity'], ['title', 'Title A–Z'], ['score'
 const sortOptions = (cur) => SORTS.map(([v, l]) => `<option value="${v}"${v === cur ? ' selected' : ''}>${l}</option>`).join('');
 const A_KIND = { movie: 'a movie', tv: 'a TV show', anime: 'an anime', game: 'a game' };
 const KIND_PLURAL = { movie: 'movies', tv: 'TV shows', anime: 'anime', game: 'games' };
+const KIND_ONE = { movie: 'movie', tv: 'TV show', anime: 'anime', game: 'game' };
 const byActivity = (a, b) => M.activity(b).localeCompare(M.activity(a));
 const options = (list) => list.map((v) => `<option value="${esc(v)}"></option>`).join('');
 
 /* ---------- frame ---------- */
+
+const friendCount = (n) => `${n} card${n === 1 ? '' : 's'}`;
+
+function nick(name, size = '') {
+  return `<span class="nick${size ? ' nick-' + size : ''}" style="background:${M.artFor({ title: name })}" aria-hidden="true">${esc(M.initials(name))}</span>`;
+}
+
+// A small segmented ring for a percentage (36 segments around, like the big one).
+function ring(pct, r, width) {
+  const c = 2 * Math.PI * r;
+  const unit = c / 36;
+  const seg = unit * 0.8;
+  const lit = Math.round((pct / 100) * 36);
+  const parts = [];
+  for (let i = 0; i < lit; i++) parts.push(seg.toFixed(2), i === lit - 1 ? c.toFixed(0) : (unit - seg).toFixed(2));
+  const box = (r + width) * 2;
+  return `<svg class="ring" aria-hidden="true" focusable="false" width="${box}" height="${box}" viewBox="0 0 ${box} ${box}"><circle cx="${box / 2}" cy="${box / 2}" r="${r}" fill="none" stroke="rgba(255,255,255,.13)" stroke-width="${width}" stroke-dasharray="${seg.toFixed(2)} ${(unit - seg).toFixed(2)}"/>${lit ? `<circle cx="${box / 2}" cy="${box / 2}" r="${r}" fill="none" style="stroke:var(--accent)" stroke-width="${width}" stroke-dasharray="${parts.join(' ')}"/>` : ''}</svg>`;
+}
+
+function friendsButton(state) {
+  const n = state.friends.length;
+  const open = state.ui.friendsOpen;
+  return `<div class="friends-wrap">
+<button type="button" class="icon-btn friends-btn" id="friends-btn" data-action="friends-toggle" aria-expanded="${open}" aria-controls="friends-pop" aria-label="Friends${n ? ', ' + friendCount(n) : ''}" title="Friends">${icon.bust}${n ? `<span class="count-badge" aria-hidden="true">${n}</span>` : ''}</button>
+${open ? friendsPanel(state) : ''}
+</div>`;
+}
+
+function friendsPanel(state) {
+  const name = state.settings.cardName || '';
+  const mine = M.live(state.titles).length;
+  const rows = state.friends.map((f) => {
+    const c = M.compareCard(state.titles, f);
+    const pct = c.agreement;
+    return `<li><a class="fp-row" href="#/friend/${encodeURIComponent(f.id)}" aria-label="${esc(`${f.name}, ${pct === null ? 'no shared scores yet' : pct + '% agreement'}, compare`)}">${nick(f.name)}<span class="fp-who"><span class="fp-name">${esc(f.name)}</span><span class="fp-meta">${f.titles.length} titles · card from ${esc(M.fmtDate(f.at))}</span></span><span class="fp-pct" aria-hidden="true">${ring(pct || 0, 14, 3)}<span>${pct === null ? '—' : pct + '%'}</span></span></a></li>`;
+  }).join('');
+  return `<section class="friends-pop" id="friends-pop" data-key="friends-pop" aria-labelledby="fp-title">
+<span class="corner c-tl" aria-hidden="true"></span><span class="corner c-tr" aria-hidden="true"></span><span class="corner c-bl" aria-hidden="true"></span><span class="corner c-br" aria-hidden="true"></span>
+<div class="fp-head"><h2 class="fp-title" id="fp-title">Friends</h2><span class="fp-count">${friendCount(state.friends.length)}</span></div>
+<div class="fp-mine">
+<div class="fp-me">${nick(name || '?')}<span class="fp-who"><span class="fp-me-title">Your card</span><span class="fp-meta">${esc(name || 'Your name')} · ${mine} titles</span></span></div>
+<label class="field"><span class="label">Your name on the card</span><input id="card-name" class="input input-sm" data-setting="cardName" value="${esc(name)}" maxlength="40" placeholder="Your first name" autocomplete="off" data-keep></label>
+<p class="fp-note">Your scores, statuses, favorites and tags. Never your notes.</p>
+<button type="button" class="btn btn-primary" data-action="card-share">${icon.download}Share my card</button>
+</div>
+${rows ? `<ul class="fp-list" aria-label="Your friends">${rows}</ul>` : '<p class="fp-note">No friend yet. Ask a friend for their card, then add it here.</p>'}
+<button type="button" class="btn btn-dashed" data-action="card-pick">${icon.plus}Add a friend's card</button>
+<p class="fp-foot">Or drop the file anywhere in Rewinder. Cards stay on this device.</p>
+</section>`;
+}
 
 export function header(state) {
   const r = state.route;
@@ -21,9 +72,10 @@ export function header(state) {
   const spoiler = state.settings.spoiler;
   return `<header class="top">
 <a class="brand" href="#/" aria-label="Rewinder, home"><img src="icons/logo-64.png" alt="" width="36" height="36"><span>REWINDER</span></a>
-<nav class="nav" aria-label="Sections">${nav('#/', 'Home', r.name === 'home')}${nav('#/list', 'Full List', r.name === 'list')}<span class="nav-sep" aria-hidden="true"></span>${M.KINDS.map((k) => nav('#/' + M.KIND_PATH[k], M.KIND_TAB[k], cur === k)).join('')}</nav>
+<nav class="nav" aria-label="Sections">${nav('#/', 'Home', r.name === 'home')}${nav('#/list', 'Full List', r.name === 'list')}<span class="nav-sep" aria-hidden="true"></span>${nav('#/all', 'All', cur === 'all')}${M.KINDS.map((k) => nav('#/' + M.KIND_PATH[k], M.KIND_TAB[k], cur === k)).join('')}</nav>
 <div class="tools">
-${r.name === 'list' ? '' : `<div class="search">${icon.search}<label class="sr" for="q-head">Search your list</label><input id="q-head" type="search" placeholder="Titles, actors, genres, tags" autocomplete="off" spellcheck="false"></div>`}
+${friendsButton(state)}
+${r.name === 'list' ? '' : `<div class="search">${icon.search}<label class="sr" for="q-head">Search your list</label><input id="q-head" type="search" placeholder="Titles, actors, directors, tags" autocomplete="off" spellcheck="false"></div>`}
 ${state.canInstall ? `<button type="button" class="btn btn-ghost" data-action="install">${icon.install}Install</button>` : ''}
 <button type="button" class="icon-btn" data-action="spoiler" aria-pressed="${spoiler}" aria-label="Spoiler mode" title="${spoiler ? 'Spoiler mode is on: your notes are blurred' : 'Spoiler mode: blur your notes'}">${icon.eyeOff}</button>
 <a class="icon-btn icon-settings" href="#/settings" aria-label="${needsBackup(state) ? 'Settings, a backup is due' : 'Settings'}" title="${needsBackup(state) ? 'Settings · time for a backup' : 'Settings'}"${r.name === 'settings' ? ' aria-current="page"' : ''}>${icon.sliders}${needsBackup(state) ? '<span class="ping" aria-hidden="true"></span>' : ''}</a>
@@ -36,7 +88,12 @@ export const footer = () => `<footer class="foot"><span>Rewinder · v${M.APP_VER
 
 /* ---------- cards and tables ---------- */
 
-function cardMeta(t) {
+// rank: a place in a wall sorted by best score; the score then comes first, whatever the status.
+function cardMeta(t, rank) {
+  if (rank) {
+    const score = M.effectiveScore(t);
+    return [`#${rank}`, `★ ${score.toFixed(1)}`, t.year].filter(Boolean).join(' · ');
+  }
   if (t.newSeason !== null) {
     const s = M.findSeason(t, t.newSeason);
     const first = s && s.episodes[0];
@@ -63,26 +120,29 @@ function cardMeta(t) {
 
 export function card(t, opts) {
   const kind = !(opts && opts.kind === false);
+  const rank = opts && opts.rank ? opts.rank : 0;
   const p = M.progress(t);
   const bar = M.hasEpisodes(t) && t.status === 'progress' && p.total > 0;
-  const meta = cardMeta(t);
+  const meta = cardMeta(t, rank);
   const extra = t.newSeason !== null ? `<span class="badge-new">S${t.newSeason} NEW</span>` : '';
   return `<a class="card" data-key="c-${esc(t.id)}" href="${tHref(t)}" aria-label="${esc(`${t.title}, ${M.KIND_LABEL[t.kind]}${meta ? ', ' + meta : ''}`)}">${poster(t, { extra, kind })}
 ${bar ? `<span class="bar" aria-hidden="true"><span style="width:${Math.round((p.watched / p.total) * 100)}%"></span></span>` : ''}${t.poster ? `<span class="card-title">${esc(t.title)}</span>` : ''}<span class="card-meta">${esc(meta)}</span></a>`;
 }
 
 // The Via column shows up once someone in the list was recommended by a friend.
-export function titleTable(rows, { emptyText = '', showKind = true } = {}) {
+export function titleTable(rows, { emptyText = '', showKind = true, q = '' } = {}) {
   const showVia = rows.some((t) => t.via);
+  const query = String(q || '').trim().toLowerCase();
   return `<div class="table-wrap"><div class="table${showKind ? '' : ' no-kind'}${showVia ? '' : ' no-via'}">
 <div class="tr th" aria-hidden="true"><span>Title</span>${showKind ? '<span>Type</span>' : ''}<span>Status</span><span>Score</span><span>Progress</span><span>Last</span>${showVia ? '<span>Via</span>' : ''}</div>
-${rows.length ? `<ol class="tbody">${rows.map((t) => tableRow(t, showKind, showVia)).join('')}</ol>` : `<p class="empty">${esc(emptyText)}</p>`}
+${rows.length ? `<ol class="tbody">${rows.map((t) => tableRow(t, showKind, showVia, query)).join('')}</ol>` : `<p class="empty">${esc(emptyText)}</p>`}
 </div></div>`;
 }
 
-function tableRow(t, showKind, showVia) {
+function tableRow(t, showKind, showVia, q) {
   const score = M.effectiveScore(t);
-  const sub = [t.titleQc, t.year, t.genres.slice(0, 2).join(', ')].filter(Boolean).join(' · ');
+  const maker = q && q.length > 2 ? (t.makers || []).find((x) => x.name.toLowerCase().includes(q)) : null;
+  const sub = maker ? [t.year, `${M.MAKER_LABEL[maker.role]} ${maker.name}`].filter(Boolean).join(' · ') : [t.titleQc, t.year, t.genres.slice(0, 2).join(', ')].filter(Boolean).join(' · ');
   return `<li class="tr" data-key="r-${esc(t.id)}">
 <a class="cell-title" href="${tHref(t)}"><span class="thumb" style="background:${M.artFor(t)}" aria-hidden="true">${t.poster ? `<img src="${esc(t.poster)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}</span><span class="tt"><span class="tt-main">${esc(t.title)}${t.fav ? `<span class="fav-mark" title="Favorite">${icon.heartOn}</span>` : ''}</span>${sub ? `<span class="tt-sub">${esc(sub)}</span>` : ''}</span></a>
 ${showKind ? `<span class="c-kind">${M.KIND_SHORT[t.kind]}</span>` : ''}
@@ -235,29 +295,31 @@ export function listView(state) {
 <div class="filters">
 <div class="chips" role="group" aria-label="Category">${cats.map(([k, label]) => `<button type="button" class="chip" data-action="list-cat" data-cat="${k}" aria-pressed="${f.cat === k}">${label}<span class="chip-count">${counts[k]}</span></button>`).join('')}</div>
 <div class="filter-tools">
-<div class="search">${icon.search}<label class="sr" for="q-list">Filter the list</label><input id="q-list" type="search" placeholder="Title, actor, genre, tag or friend" value="${esc(f.q)}" data-filter="q" autocomplete="off" spellcheck="false"></div>
+<div class="search">${icon.search}<label class="sr" for="q-list">Filter the list</label><input id="q-list" type="search" placeholder="Title, actor, director, genre, tag or friend" value="${esc(f.q)}" data-filter="q" autocomplete="off" spellcheck="false"></div>
 <label class="sr" for="plat-list">Platform</label><select id="plat-list" class="select" data-filter="platform"><option value="">All platforms</option>${platforms.map((p) => `<option value="${esc(p)}"${p === f.platform ? ' selected' : ''}>${esc(p)}</option>`).join('')}</select>
 <label class="sr" for="sort-list">Sort by</label><select id="sort-list" class="select" data-filter="sort">${sortOptions(f.sort)}</select>
 </div>
 </div>
 ${active.length ? `<div class="chips">${active.join('')}</div>` : ''}
-${titleTable(rows, { emptyText: all.length ? 'No titles match. Try another category or clear the filter.' : 'Your list is empty. Use Scan to add your first title.' })}
+${titleTable(rows, { q: f.q, emptyText: all.length ? 'No titles match. Try another category or clear the filter.' : 'Your list is empty. Use Scan to add your first title.' })}
 </div>`;
 }
 
+// One kind, or "all": every poster in one wall (the Full List is the table of everything).
 export function browseView(state, kind) {
-  const all = M.live(state.titles).filter((t) => t.kind === kind);
-  const view = state.settings.browseView === 'list' ? 'list' : 'wall';
+  const every = kind === 'all';
+  const all = M.live(state.titles).filter((t) => every || t.kind === kind);
+  const view = !every && state.settings.browseView === 'list' ? 'list' : 'wall';
   const list = M.sortTitles(all, state.ui.browseSort);
   const body = !all.length
-    ? `<div class="empty-box"><p class="lead">No ${KIND_PLURAL[kind]} yet.</p><button type="button" class="btn btn-primary" data-action="add" data-kind="${kind}">${icon.plus}Add ${A_KIND[kind]}</button></div>`
-    : view === 'wall' ? `<div class="wall">${list.map((t) => card(t, { kind: false })).join('')}</div>` : titleTable(list, { showKind: false });
+    ? `<div class="empty-box"><p class="lead">${every ? 'Nothing here yet.' : `No ${KIND_PLURAL[kind]} yet.`}</p><button type="button" class="btn btn-primary" data-action="add"${every ? '' : ` data-kind="${kind}"`}>${icon.plus}${every ? 'Add a title' : `Add ${A_KIND[kind]}`}</button></div>`
+    : view === 'wall' ? `<div class="wall">${list.map((t, i) => card(t, { kind: every, rank: state.ui.browseSort === 'score' && M.effectiveScore(t) !== null ? i + 1 : 0 })).join('')}</div>` : titleTable(list, { showKind: false });
   return `<div class="page page-list">
-<div class="page-head"><div class="titles"><span class="eyebrow">// ${plural(all.length, 'title')}</span><h1 class="display display-md">${M.KIND_TAB[kind]}</h1></div>
+<div class="page-head"><div class="titles"><span class="eyebrow">// ${plural(all.length, 'title')}</span><h1 class="display display-md">${every ? 'All' : M.KIND_TAB[kind]}</h1></div>
 <div class="filter-tools">
 <label class="sr" for="sort-browse">Sort by</label><select id="sort-browse" class="select" data-filter="browseSort">${sortOptions(state.ui.browseSort)}</select>
-<div class="seg-btns" role="group" aria-label="View"><button type="button" class="icon-btn" data-action="browse-view" data-view="wall" aria-pressed="${view === 'wall'}" aria-label="Poster wall" title="Poster wall">${icon.grid}</button><button type="button" class="icon-btn" data-action="browse-view" data-view="list" aria-pressed="${view === 'list'}" aria-label="List" title="List">${icon.rows}</button></div>
-<button type="button" class="btn btn-ghost" data-action="add" data-kind="${kind}">${icon.plus}Add</button>
+${every ? '' : `<div class="seg-btns" role="group" aria-label="View"><button type="button" class="icon-btn" data-action="browse-view" data-view="wall" aria-pressed="${view === 'wall'}" aria-label="Poster wall" title="Poster wall">${icon.grid}</button><button type="button" class="icon-btn" data-action="browse-view" data-view="list" aria-pressed="${view === 'list'}" aria-label="List" title="List">${icon.rows}</button></div>`}
+<button type="button" class="btn btn-ghost" data-action="add"${every ? '' : ` data-kind="${kind}"`}>${icon.plus}Add</button>
 </div>
 </div>
 ${body}
@@ -290,7 +352,7 @@ function episodeDetails(s, e) {
 <div class="ep-fields">
 <label class="field"><span class="label">Title</span><input id="ep-title-${id}" class="input input-sm" data-ep-field="title" data-ep="${k}" value="${esc(e.title)}" placeholder="Episode ${e.n}" maxlength="300" autocomplete="off"></label>
 <label class="field"><span class="label">Aired</span><input id="ep-aired-${id}" type="date" class="input input-sm" data-ep-field="aired" data-ep="${k}" value="${esc(e.aired)}"></label>
-${e.watched ? `<label class="field"><span class="label">Watched on</span><input id="ep-watched-${id}" type="date" class="input input-sm" data-ep-field="watched" data-ep="${k}" value="${e.watched === 'unknown' ? '' : esc(e.watched)}" required></label>` : ''}
+${e.watched ? `<div class="field"><label class="label" for="ep-watched-${id}">Watched on</label><span class="ep-when"><input id="ep-watched-${id}" type="date" class="input input-sm" data-ep-field="watched" data-ep="${k}" value="${e.watched === 'unknown' ? '' : esc(e.watched)}" max="${M.today()}">${e.watched === 'unknown' ? '<span class="ep-when-note">date unknown</span>' : `<button type="button" class="btn btn-ghost btn-sm" data-action="ep-unknown" data-ep="${k}">Unknown</button>`}</span></div>` : ''}
 </div>
 <label class="field"><span class="label">Note</span><textarea id="note-ep-${id}" class="textarea note-field" rows="2" data-ep-note="${k}" placeholder="What did you think of this one?">${esc(e.note)}</textarea></label>
 <div class="ep-foot"><button type="button" class="btn btn-ghost btn-sm btn-danger" data-action="ep-remove" data-ep="${k}">${icon.trash}Remove episode</button></div>
@@ -318,8 +380,16 @@ ${open ? episodeDetails(s, e) : ''}
 </li>`;
 }
 
-function seasonBody(t, s, nx, openEp) {
+// The date shared by a season's watched episodes: one date, 'unknown', 'mixed', or '' when none is watched.
+function seasonWatchedDate(s) {
+  const dates = [...new Set(s.episodes.filter((e) => e.watched).map((e) => e.watched))];
+  if (!dates.length) return '';
+  return dates.length === 1 ? dates[0] : 'mixed';
+}
+
+function seasonBody(t, s, nx, openEp, editing) {
   const total = s.episodes.length;
+  const seenOn = seasonWatchedDate(s);
   const allWatched = total > 0 && s.episodes.every((e) => e.watched);
   const avg = M.seasonAverage(s);
   const own = typeof s.score === 'number';
@@ -331,6 +401,7 @@ function seasonBody(t, s, nx, openEp) {
 <div class="season-tools">
 <div class="season-rate">${rater({ key: 'season:' + s.n, value: M.seasonScore(s), label: `${M.seasonName(s.n)} score`, size: 'sm' })}${own ? `<button type="button" class="btn btn-dashed btn-sm" data-action="season-score-reset" data-n="${s.n}">Back to average</button>` : ''}<span class="note-line">${esc(note)}</span></div>
 <div class="season-actions">
+${seenOn ? `<span class="season-date"><span class="label">Watched</span>${dateField(`season-${s.n}`, seenOn, editing === `season-${s.n}`, `Watched date for ${M.seasonName(s.n)}`)}</span>` : ''}
 ${total ? `<button type="button" class="btn btn-ghost btn-sm" data-action="season-all" data-n="${s.n}"${allWatched ? ' disabled' : ''}>${icon.check}All watched</button>` : ''}
 <button type="button" class="btn btn-ghost btn-sm" data-action="ep-add" data-n="${s.n}">${icon.plus}Episode</button>
 <button type="button" class="btn btn-ghost btn-sm btn-danger" data-action="season-remove" data-n="${s.n}" title="Remove ${M.seasonName(s.n)}">${icon.trash}<span class="sr">Remove ${M.seasonName(s.n)}</span></button>
@@ -353,7 +424,7 @@ function seasonBlock(t, s, state, nx) {
 <span class="season-name">${M.seasonName(s.n)}</span>${year ? `<span class="season-year">${esc(year)}</span>` : ''}${t.newSeason === s.n ? '<span class="tag-acc">NEW</span>' : ''}
 <span class="season-stats">${sc !== null ? `<span class="season-avg">${icon.star}${sc.toFixed(1)}${typeof s.score === 'number' ? '' : ' avg'}</span>` : ''}<span>${watched}/${total}</span>${icon.chevron}</span>
 </button>
-${open ? seasonBody(t, s, nx, state.ui.openEp) : ''}
+${open ? seasonBody(t, s, nx, state.ui.openEp, state.ui.dateEdit) : ''}
 </div>`;
 }
 
@@ -440,10 +511,11 @@ function viaPanel(t, state) {
 
 // A date shown as a small button; a click opens a date field with "Unknown" and "OK".
 function dateField(key, value, editing, label) {
+  const shown = value === 'mixed' ? 'various dates' : M.shownDate(value, true);
   if (editing) {
-    return `<span class="date-edit"><label class="sr" for="de-${key}">${esc(label)}</label><input id="de-${key}" type="date" class="input input-sm" data-date-edit="${key}" value="${value === 'unknown' ? '' : esc(value)}" max="${M.today()}"><button type="button" class="btn btn-ghost btn-sm" data-action="date-unknown" data-key="${key}">Unknown</button><button type="button" class="btn btn-primary btn-sm" data-action="date-close">OK</button></span>`;
+    return `<span class="date-edit"><label class="sr" for="de-${key}">${esc(label)}</label><input id="de-${key}" type="date" class="input input-sm" data-date-edit="${key}" value="${value === 'unknown' || value === 'mixed' ? '' : esc(value)}" max="${M.today()}"><button type="button" class="btn btn-ghost btn-sm" data-action="date-unknown" data-key="${key}">Unknown</button><button type="button" class="btn btn-primary btn-sm" data-action="date-close">OK</button></span>`;
   }
-  return `<button type="button" class="date-btn" data-action="date-edit" data-key="${key}" aria-label="${esc(label)}: ${esc(M.shownDate(value, true))}. Change it">${esc(M.shownDate(value, true))}${icon.edit}</button>`;
+  return `<button type="button" class="date-btn" data-action="date-edit" data-key="${key}" aria-label="${esc(label)}: ${esc(shown)}. Change it">${esc(shown)}${icon.edit}</button>`;
 }
 
 function viewsPanel(t, editing) {
@@ -483,6 +555,17 @@ function scanButton(t, state) {
   return `<button type="button" class="btn btn-line" data-action="rescan" title="${linked ? `Refresh from ${source}` : `Find it on ${source} and fill in the rest`}">${icon.radar}${linked ? 'Rescan' : 'Scan'}</button>`;
 }
 
+// "Directed by Quentin Tarantino": a click shows everything of theirs in the Full List.
+function makersLine(t) {
+  if (!t.makers || !t.makers.length) return '';
+  const roles = [...new Set(t.makers.map((x) => x.role))];
+  return `<div class="makers">${roles.map((role) => {
+    const list = t.makers.filter((x) => x.role === role);
+    const label = role === 'Studio' && list.length > 1 ? 'Studios' : M.MAKER_LABEL[role];
+    return `<span class="makers-label">${label}</span>${list.map((x) => `<button type="button" class="maker" data-action="search-for" data-q="${esc(x.name)}" title="Find ${esc(x.name)} in your list"><span class="maker-ini" aria-hidden="true">${esc(M.initials(x.name))}</span>${esc(x.name)}${icon.search}</button>`).join('')}`;
+  }).join('')}</div>`;
+}
+
 export function titleView(state, t) {
   const series = M.hasEpisodes(t);
   const p = M.progress(t);
@@ -500,6 +583,7 @@ export function titleView(state, t) {
 <p class="t-meta">${esc(meta)}</p>
 <div class="titles"><h1 class="display" id="t-title">${esc(t.title)}</h1>${t.titleQc ? `<p class="qc">${esc(t.titleQc)}</p>` : ''}</div>
 ${t.genres.length ? `<div class="chips">${t.genres.map((g) => `<button type="button" class="chip chip-sm" data-action="search-for" data-q="${esc(g)}">${esc(g)}</button>`).join('')}</div>` : ''}
+${makersLine(t)}
 ${t.overview ? `<p class="overview">${esc(t.overview)}</p>` : ''}
 <div class="rating">
 <div class="rating-row">${rater({ key: 'title', value: score, label: series ? 'Series score' : 'Your score' })}${own ? '<button type="button" class="btn btn-dashed" data-action="score-reset">Back to average</button>' : ''}</div>
@@ -657,6 +741,7 @@ ${kindPicker(t.kind)}
 <label class="field field-narrow"><span class="label">Year</span><input class="input" name="year" type="number" min="1870" max="2100" value="${t.year ?? ''}"></label>
 <label class="field"><span class="label">Genres <span class="opt">separated by commas</span></span><input class="input" name="genres" value="${esc(t.genres.join(', '))}" placeholder="Drama, Sci-Fi"></label>
 </div>
+<label class="field"><span class="label">${t.kind === 'game' ? 'Studio' : t.kind === 'movie' ? 'Directed by' : 'Created by'} <span class="opt">separated by commas</span></span><input class="input" name="makers" value="${esc((t.makers || []).map((x) => x.name).join(', '))}" placeholder="${t.kind === 'game' ? 'Studio names' : 'Names'}"></label>
 <label class="field"><span class="label">Cast <span class="opt">separated by commas</span></span><input class="input" name="cast" value="${esc(t.cast.map((c) => c.name).join(', '))}" placeholder="Actor names"></label>
 <label class="field"><span class="label">Summary <span class="opt">optional</span></span><textarea class="textarea" name="overview" rows="3">${esc(t.overview)}</textarea></label>
 <p class="dlg-error" id="edit-error" role="alert" hidden></p>
@@ -672,11 +757,110 @@ export function confirmDialog({ title, body, yes = 'Confirm', danger = false }) 
 </div>`;
 }
 
-export function choiceDialog({ title, body, choices }) {
+export function choiceDialog({ title, body, choices, date }) {
   return `<div class="dlg-form">
 <div class="dlg-head"><h2 class="dlg-title" id="dlg-title">${esc(title)}</h2></div>
 <p class="dlg-text">${esc(body)}</p>
+${date ? `<label class="field choice-date"><span class="label">${esc(date.label)}</span><input id="choice-date" type="date" class="input" value="${esc(date.value)}" max="${esc(date.max)}" data-choice-date></label>` : ''}
 <div class="dlg-actions">${choices.map((c) => `<button type="button" class="btn ${c.primary ? 'btn-primary' : 'btn-ghost'}" data-action="choice" data-value="${esc(c.value)}">${esc(c.label)}</button>`).join('')}</div>
+</div>`;
+}
+
+export function acquiredDialog(f, c, replaced) {
+  return `<div class="acq"><div class="acq-in">
+<span class="acq-glow" aria-hidden="true"></span>
+${nick(f.name, 'lg')}
+<div class="acq-head"><span class="eyebrow">// ${replaced ? 'Card updated' : 'New card'}</span><h2 class="acq-title" id="dlg-title">${esc(f.name)}'s card acquired</h2></div>
+<div class="acq-stats">
+<div class="acq-stat"><b>${f.titles.length}</b><span>Titles</span></div>
+<div class="acq-stat"><b>${c.common.length}</b><span>In common</span></div>
+<div class="acq-stat acq-hot"><b>${c.agreement === null ? '—' : c.agreement + '%'}</b><span>Agreement</span></div>
+</div>
+<p class="dlg-text">Card from ${esc(M.fmtDate(f.at, true))}. When ${esc(f.name)} sends a newer one, add it the same way: it replaces this one.</p>
+<div class="acq-actions"><button type="button" class="btn btn-ghost" data-action="choice" data-value="later">Later</button><button type="button" class="btn btn-primary" data-action="choice" data-value="compare">Compare</button></div>
+</div></div>`;
+}
+
+function duelRow(c, name) {
+  const t = c.mine;
+  const x = c.theirs;
+  const art = t.poster || x.poster;
+  const far = c.gap !== null && c.gap >= 2;
+  const gapLabel = c.gap === null ? 'not both rated' : c.gap < 0.05 ? 'Same' : `${c.gap.toFixed(1)} apart`;
+  return `<li class="fr-row">
+<a class="fr-what" href="${tHref(t)}"><span class="thumb" style="background:${M.artFor(t)}" aria-hidden="true">${art ? `<img src="${esc(art)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}</span><span class="tt"><span class="tt-main">${esc(t.title)}</span><span class="tt-sub">${esc([M.KIND_LABEL[t.kind], t.year].filter(Boolean).join(' · '))}</span></span></a>
+<span class="fr-scores">
+<span class="fr-score"><span class="who">You</span><b class="you">${c.you === null ? '—' : M.fmtScore(c.you)}</b></span>
+<span class="fr-score"><span class="who">${esc(name)}</span><b class="them">${c.them === null ? '—' : M.fmtScore(c.them)}</b></span>
+<span class="fr-gap"><span class="gap-bar" aria-hidden="true"><span style="width:${c.gap === null ? 0 : Math.min(100, Math.round((c.gap / 5) * 100))}%"${far ? ' class="far"' : ''}></span></span><span class="gap-tag${far ? ' far' : ''}">${gapLabel}</span></span>
+</span>
+</li>`;
+}
+
+function pickRow(p, i, name) {
+  const x = p.theirs;
+  const sub = [M.KIND_LABEL[x.kind], x.year, x.fav ? `one of ${name}'s favorites` : ''].filter(Boolean).join(' · ');
+  const action = p.mine
+    ? `<a class="fr-have" href="${tHref(p.mine)}">${icon.check}In your ${p.mine.status === 'watchlist' ? 'watchlist' : 'list'}</a>`
+    : `<button type="button" class="btn btn-dashed btn-sm" data-action="friend-add" data-i="${i}">${icon.plus}Watchlist</button>`;
+  return `<li class="fr-row">
+<span class="fr-what"><span class="thumb" style="background:${M.artFor({ title: x.title })}" aria-hidden="true">${x.poster ? `<img src="${esc(x.poster)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}</span><span class="tt"><span class="tt-main">${esc(x.title)}</span><span class="tt-sub">${esc(sub)}</span></span></span>
+<span class="fr-scores">
+<span class="fr-score"><span class="who">${esc(name)}</span><b class="them">${x.score === null ? '—' : M.fmtScore(x.score)}</b></span>
+<span class="fr-status">${esc(M.STATUS_LABEL[x.status])}</span>
+${action}
+</span>
+</li>`;
+}
+
+export function friendView(state, f) {
+  if (!f) {
+    return `<div class="page"><div class="empty-box"><p class="lead">This card is not here anymore.</p><a class="btn btn-primary" href="#/">Back home</a></div></div>`;
+  }
+  const c = M.compareCard(state.titles, f);
+  const tab = ['common', 'picks', 'gaps'].includes(state.ui.friendTab) ? state.ui.friendTab : 'common';
+  const kinds = M.KINDS.map((k) => [k, f.titles.filter((x) => x.kind === k).length]).filter(([, n]) => n)
+    .map(([k, n]) => `${n} ${n === 1 ? KIND_ONE[k] : KIND_PLURAL[k]}`);
+  const tabs = [
+    ['common', 'In common', c.common.length],
+    ['picks', `${f.name} has seen`, c.picks.length],
+    ['gaps', 'Disagreements', c.gaps.length]
+  ];
+  const lists = { common: c.common, picks: c.picks, gaps: c.gaps };
+  const list = lists[tab];
+  const limit = state.ui.friendAll ? list.length : 30;
+  const shown = list.slice(0, limit);
+  const heads = {
+    common: ['In common', 'Both scores side by side, your shared favorites first.', `Titles you have both seen show up here.`],
+    picks: [`${f.name} has seen, not you`, `Best first. Add one to your watchlist: it comes with “Recommended by ${f.name}”.`, `You have seen everything ${f.name} has. Impressive.`],
+    gaps: ['Disagreements', 'Two points apart or more, biggest first.', 'No big disagreement. You two are in sync.']
+  };
+  const [title, hint, empty] = heads[tab];
+  const pct = c.agreement;
+  const readouts = [
+    ['In common', c.common.length, ''],
+    ['Within 1 point', c.scored ? `${c.within}/${c.scored}` : '—', ''],
+    ['Your average', c.myAvg === null ? '—' : c.myAvg.toFixed(1), 'you'],
+    [`${f.name} average`, c.theirAvg === null ? '—' : c.theirAvg.toFixed(1), 'them'],
+    ['Both favorites', c.bothFav, '']
+  ];
+  return `<div class="page page-friend">
+<nav class="crumbs crumbs-static" aria-label="Breadcrumb"><ol><li><a href="#/">Home</a></li><li aria-hidden="true">/</li><li><button type="button" class="link-btn crumb-btn" data-action="friends-toggle">Friends</button></li><li aria-hidden="true">/</li><li aria-current="page">${esc(f.name)}</li></ol></nav>
+<div class="fr-head">
+<div class="fr-id">${nick(f.name, 'xl')}<div class="titles"><span class="eyebrow">// Friend · card from ${esc(M.fmtDate(f.at, true))}</span><h1 class="display display-md">${esc(f.name)}</h1><span class="fr-kinds">${esc([`${f.titles.length} titles`, ...kinds].join(' · '))}</span></div></div>
+<div class="actions"><button type="button" class="btn btn-ghost" data-action="card-pick">${icon.upload}Load a newer card</button><button type="button" class="btn btn-ghost btn-danger" data-action="friend-remove" data-id="${esc(f.id)}">Remove</button></div>
+</div>
+<section class="fr-board" aria-label="Overview">
+<span class="corner c-tl" aria-hidden="true"></span><span class="corner c-tr" aria-hidden="true"></span><span class="corner c-bl" aria-hidden="true"></span><span class="corner c-br" aria-hidden="true"></span>
+<div class="fr-tabs" role="tablist" aria-label="Compare with ${esc(f.name)}">${tabs.map(([id, label, n]) => `<button type="button" role="tab" class="fr-tab" id="tab-${id}" data-action="friend-tab" data-tab="${id}" aria-selected="${tab === id}" aria-controls="fr-panel"><span>${esc(label)}</span><span class="fr-tab-n">${n}</span></button>`).join('')}</div>
+<div class="fr-ring">${ring(pct || 0, 135, 22)}<div class="fr-ring-in"><span class="fr-pct">${pct === null ? '—' : pct + '%'}</span><span class="fr-ring-label">Agreement</span><span class="fr-ring-sub">${c.scored ? `${c.within} of ${c.scored} within 1 point` : 'Rate titles you both saw'}</span></div></div>
+<dl class="fr-read">${readouts.map(([label, value, cls]) => `<div><dt>${esc(label)}</dt><span class="dots" aria-hidden="true"></span><dd${cls ? ` class="${cls}"` : ''}>${esc(value)}</dd></div>`).join('')}</dl>
+</section>
+<section class="fr-panel" id="fr-panel" role="tabpanel" aria-labelledby="tab-${tab}">
+<div class="sec-head"><h2 class="h2"><span class="sq" aria-hidden="true"></span>${esc(title)}<span class="head-count">${list.length}</span></h2><span class="fr-hint">${esc(hint)}</span></div>
+${shown.length ? `<ol class="fr-list">${shown.map((x, i) => (tab === 'picks' ? pickRow(x, i, f.name) : duelRow(x, f.name))).join('')}</ol>` : `<p class="empty-line">${esc(empty)}</p>`}
+${list.length > shown.length ? `<button type="button" class="link-btn fr-more" data-action="friend-all">Show all ${list.length}</button>` : ''}
+</section>
 </div>`;
 }
 

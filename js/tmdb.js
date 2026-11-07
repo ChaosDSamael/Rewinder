@@ -137,6 +137,36 @@ export async function searchKind(query, kind, year, key, signal) {
   });
 }
 
+// Who made it: a movie's director; a show's creators, or else the director of the most episodes.
+const MAKERS = 3;
+function movieMakers(credits) {
+  const out = [];
+  for (const c of (credits && credits.crew) || []) {
+    if (c && c.job === 'Director' && c.name && !out.some((m) => m.name === c.name)) out.push({ name: String(c.name), role: 'Director' });
+  }
+  return out.slice(0, MAKERS);
+}
+
+function showMakers(d, aggregate) {
+  const made = (d.created_by || []).filter((c) => c && c.name).slice(0, MAKERS).map((c) => ({ name: String(c.name), role: 'Creator' }));
+  if (made.length) return made;
+  let best = null;
+  for (const c of (aggregate && aggregate.crew) || []) {
+    const job = (c && c.jobs || []).find((j) => j && j.job === 'Director');
+    if (c.name && job && (!best || (job.episode_count || 0) > best.n)) best = { name: String(c.name), n: job.episode_count || 0 };
+  }
+  return best ? [{ name: best.name, role: 'Director' }] : [];
+}
+
+// For titles saved before makers were kept: the lightest calls that answer it.
+export async function fetchMakers(type, id, key) {
+  if (type === 'movie') return movieMakers(await get(`/movie/${id}/credits`, {}, key));
+  const d = await get(`/tv/${id}`, { language: 'en-US' }, key);
+  const made = showMakers(d, null);
+  if (made.length) return made;
+  return showMakers(d, await get(`/tv/${id}/aggregate_credits`, { language: 'en-US' }, key));
+}
+
 // Everything about one title. Seasons come 20 at a time, the most TMDB allows per request.
 export async function fetchTitle(type, id, key, onStep) {
   if (type === 'movie') {
@@ -157,6 +187,7 @@ export async function fetchTitle(type, id, key, onStep) {
       poster: image(d.poster_path, 'w500'),
       backdrop: image(d.backdrop_path, 'w1280'),
       cast: ((d.credits && d.credits.cast) || []).slice(0, 12).map((c) => ({ name: c.name, role: c.character || '' })),
+      makers: movieMakers(d.credits),
       providers: watch.names.map((name) => ({ name, url: '' })),
       watchLink: watch.link,
       available: [],
@@ -197,6 +228,7 @@ export async function fetchTitle(type, id, key, onStep) {
     poster: image(d.poster_path, 'w500'),
     backdrop: image(d.backdrop_path, 'w1280'),
     cast,
+    makers: showMakers(d, d.aggregate_credits),
     providers: watch.names.map((name) => ({ name, url: '' })),
     watchLink: watch.link,
     available: [],

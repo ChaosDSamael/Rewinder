@@ -30,6 +30,24 @@ Des notes sur 10 (les étoiles se remplissent au dixième), des commentaires, le
 - Sans clé, tout marche à la main.
 - **Nouvelles saisons** : à l'ouverture, une fois par jour, Rewinder regarde sur TMDB les séries et les animes que tu suis (In Progress, Completed ou On Hold). Une nouvelle saison apparaît dans **New Seasons** sur l'accueil. Quand tu coches un de ses épisodes, une série Completed repasse In Progress.
 
+## Parcourir
+
+- **All** montre toutes tes affiches ensemble : films, séries, animes et jeux. Trie par **Best score** pour voir ton top, avec le rang (#1, #2…) sous chaque affiche. Pratique pour ajuster une note qui te semble trop haute ou trop basse.
+- Sur une fiche, **Directed by** (films), **Created by** (séries, animes) ou **Studio** (jeux). Un clic sur le nom montre tout ce que tu as de cette personne dans la **Full List**. La recherche trouve aussi les réalisateurs. Pour les titres déjà dans ta liste, Rewinder va chercher les noms une fois, tout seul (il faut ta clé TMDB, ou RAWG pour les jeux).
+
+## Les dates
+
+- Une série mise **Completed** te demande si tu veux cocher les épisodes déjà sortis : à la date que tu choisis (aujourd'hui par défaut), avec la date inconnue, ou juste le statut.
+- Les dates se changent après : un clic sur la date d'un visionnement (Watch count), d'une saison (sous la saison ouverte) ou d'un épisode. **Unknown** remet la date inconnue.
+
+## Cartes d'amis
+
+- L'icône du petit bonhomme, à gauche de la recherche. Écris ton nom, puis **Share my card** : un fichier `rewinder-card-ton-nom.json` à envoyer à tes amis (Discord, courriel…).
+- Ta carte contient tes notes, tes statuts, tes favoris et tes tags. Jamais tes commentaires, tes dates ni tes clés.
+- Pour ajouter la carte d'un ami : **Add a friend's card**, ou glisse le fichier n'importe où dans Rewinder. Une carte plus récente du même ami remplace l'ancienne.
+- L'écran de l'ami : le % d'accord (la part de vos titres en commun où vous êtes à 1 point ou moins), **In common**, ce qu'il a vu et pas toi (**+ Watchlist** l'ajoute avec « Recommended by »), pis vos plus gros désaccords.
+- Les cartes restent sur ton ordi. Elles ne se mettent pas à jour toutes seules : ton ami t'en renvoie une quand sa liste change.
+
 ## Importer une liste
 
 **Settings → Import a list** (ou le bouton sur l'écran d'accueil). Tu choisis ce qu'il y a dans la liste (films, séries, animes, jeux), tu colles ton texte ou tu ouvres un fichier .txt, pis Rewinder te montre tout avant d'ajouter quoi que ce soit.
