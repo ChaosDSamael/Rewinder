@@ -19,15 +19,16 @@ Des notes sur 10 (les étoiles se remplissent au dixième), des commentaires, le
 
 ## Le Scan
 
-- Le bouton **Scan** cherche sur TMDB : affiche, saisons, noms d'épisodes, dates de sortie, acteurs, titre québécois, où regarder au Canada.
-- Chaque personne met sa propre clé gratuite dans **Settings** : [TMDB](https://www.themoviedb.org/settings/api) pour les films, séries et animes. La clé reste dans ton navigateur et ne va jamais dans les backups. Le formulaire de TMDB demande une adresse et un numéro de téléphone.
-- Sur une fiche faite à la main, **Scan** la relie à TMDB. Ensuite, **Rescan** la met à jour (nouveaux épisodes, dates, plateformes). Tes notes, tes épisodes cochés et tes commentaires restent.
-- Les jeux ([RAWG](https://rawg.io/apidocs)) arrivent à la prochaine mise à jour. Sans clé, tout marche à la main.
+- Le bouton **Scan** cherche les films, séries et animes sur TMDB, pis les jeux sur RAWG. Il remplit l'affiche, les saisons, les noms d'épisodes, les dates de sortie, les acteurs, le titre québécois, où regarder au Canada, pis où acheter les jeux.
+- Les genres des animes viennent d'AniList (pas de clé à avoir).
+- Chaque personne met ses propres clés gratuites dans **Settings** : [TMDB](https://www.themoviedb.org/settings/api) pour les films, séries et animes, [RAWG](https://rawg.io/apidocs) pour les jeux. Les clés restent dans ton navigateur et ne vont jamais dans les backups. Le formulaire de TMDB demande une adresse et un numéro de téléphone.
+- Sur une fiche faite à la main, **Scan** la relie à TMDB ou RAWG. Ensuite, **Rescan** la met à jour. Tes notes, tes épisodes cochés et tes commentaires restent.
+- Sans clé, tout marche à la main.
 
 ## Crédits
 
 - This product uses the TMDB API but is not endorsed or certified by TMDB.
-- Données de jeux : [RAWG](https://rawg.io). Où regarder : JustWatch, par TMDB.
+- Données de jeux : [RAWG](https://rawg.io). Genres d'anime : [AniList](https://anilist.co). Où regarder : JustWatch, par TMDB.
 - Polices : Chakra Petch, Inter et JetBrains Mono, sous licence SIL Open Font License (voir `fonts/`).
 
 ## Technique

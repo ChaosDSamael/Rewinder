@@ -127,9 +127,11 @@ export async function fetchTitle(type, id, key, onStep) {
     const title = mainTitle(d, 'movie');
     const watch = watchCA(d['watch/providers']);
     return {
+      source: 'tmdb',
       tmdbId: d.id,
       tmdbType: 'movie',
       kind: 'movie',
+      original: String(d.original_title || '').trim(),
       title,
       titleQc: quebecTitle(d, 'movie', title),
       year: yearOf(d.release_date),
@@ -138,8 +140,9 @@ export async function fetchTitle(type, id, key, onStep) {
       poster: image(d.poster_path, 'w500'),
       backdrop: image(d.backdrop_path, 'w1280'),
       cast: ((d.credits && d.credits.cast) || []).slice(0, 12).map((c) => ({ name: c.name, role: c.character || '' })),
-      providers: watch.names,
+      providers: watch.names.map((name) => ({ name, url: '' })),
       watchLink: watch.link,
+      available: [],
       seasons: null
     };
   }
@@ -164,8 +167,10 @@ export async function fetchTitle(type, id, key, onStep) {
     .slice(0, 12)
     .map((c) => ({ name: c.name, role: (c.roles && c.roles[0] && c.roles[0].character) || '' }));
   return {
+    source: 'tmdb',
     tmdbId: d.id,
     tmdbType: 'tv',
+    original: String(d.original_name || '').trim(),
     kind: kindOf('tv', (d.genres || []).map((g) => g.id), d.original_language, d.origin_country),
     title,
     titleQc: quebecTitle(d, 'tv', title),
@@ -175,8 +180,9 @@ export async function fetchTitle(type, id, key, onStep) {
     poster: image(d.poster_path, 'w500'),
     backdrop: image(d.backdrop_path, 'w1280'),
     cast,
-    providers: watch.names,
+    providers: watch.names.map((name) => ({ name, url: '' })),
     watchLink: watch.link,
+    available: [],
     seasons
   };
 }

@@ -20,6 +20,8 @@ export const icon = {
   check: svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>', { size: 18, stroke: 2.4 }),
   checkSm: svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>', { size: 12, stroke: 3 }),
   chevron: svg('<path d="M6 9l6 6 6-6"/>', { size: 18, stroke: 2, cls: 'chev' }),
+  chevLeft: svg('<path d="M15 6l-6 6 6 6"/>', { size: 20, stroke: 2 }),
+  chevRight: svg('<path d="M9 6l6 6-6 6"/>', { size: 20, stroke: 2 }),
   plus: svg('<path d="M12 5v14M5 12h14"/>', { size: 16, stroke: 2.2 }),
   x: svg('<path d="M6 6l12 12M18 6L6 18"/>', { size: 14, stroke: 2.2 }),
   edit: svg('<path d="M4 20h4L18.5 9.5a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="M13.5 8.5l2 2"/>', { size: 18 }),

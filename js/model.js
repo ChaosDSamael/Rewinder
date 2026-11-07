@@ -1,6 +1,6 @@
 // Rewinder — data helpers. Pure functions: no DOM, no storage.
 
-export const APP_VERSION = '1.1.0';
+export const APP_VERSION = '1.2.0';
 
 export const KINDS = ['movie', 'tv', 'anime', 'game'];
 export const KIND_LABEL = { movie: 'Movie', tv: 'TV Show', anime: 'Anime', game: 'Game' };
@@ -160,7 +160,7 @@ export function newTitle(fields = {}) {
     poster: '', backdrop: '', status: 'watchlist', fav: false, score: null, notes: '',
     tags: [], via: '', views: [], platforms: [], game: { story: null, full: null },
     seasons: [], cast: [], providers: [], newSeason: null,
-    tmdbId: null, tmdbType: '', watchLink: '', scannedAt: null,
+    tmdbId: null, tmdbType: '', watchLink: '', scannedAt: null, rawgId: null, rawgSlug: '', available: [],
     createdAt: now, updatedAt: now, lastActivity: now, deletedAt: null,
     ...fields
   };
@@ -223,12 +223,19 @@ export function normalizeTitle(raw) {
       })) : []
     })).sort((a, b) => a.n - b.n) : [],
     cast: Array.isArray(r.cast) ? r.cast.filter((c) => c && c.name).slice(0, 40).map((c) => ({ name: String(c.name).slice(0, 120), role: String(c.role || '').slice(0, 120) })) : [],
-    providers: Array.isArray(r.providers) ? r.providers.filter((p) => p && p.name).slice(0, 30).map((p) => ({ name: String(p.name).slice(0, 60), source: p.source === 'tmdb' ? 'tmdb' : 'manual' })) : [],
+    providers: Array.isArray(r.providers) ? r.providers.filter((p) => p && p.name).slice(0, 30).map((p) => ({
+      name: String(p.name).slice(0, 60),
+      source: ['tmdb', 'rawg'].includes(p.source) ? p.source : 'manual',
+      url: typeof p.url === 'string' && /^https:\/\/[\w.-]+\.[a-z]{2,}\//i.test(p.url) ? p.url.slice(0, 500) : ''
+    })) : [],
     newSeason: Number.isInteger(r.newSeason) ? r.newSeason : null,
     tmdbId: Number.isInteger(r.tmdbId) && r.tmdbId > 0 ? r.tmdbId : null,
     tmdbType: r.tmdbType === 'movie' || r.tmdbType === 'tv' ? r.tmdbType : '',
     watchLink: typeof r.watchLink === 'string' && r.watchLink.startsWith('https://www.themoviedb.org/') ? r.watchLink : '',
     scannedAt: r.scannedAt ? String(r.scannedAt) : null,
+    rawgId: Number.isInteger(r.rawgId) && r.rawgId > 0 ? r.rawgId : null,
+    rawgSlug: typeof r.rawgSlug === 'string' && /^[a-z0-9-]{1,120}$/.test(r.rawgSlug) ? r.rawgSlug : '',
+    available: strList(r.available, 16),
     createdAt: String(r.createdAt || base.createdAt),
     updatedAt: String(r.updatedAt || base.updatedAt),
     lastActivity: String(r.lastActivity || r.updatedAt || base.lastActivity),
@@ -333,11 +340,18 @@ const seasonHasData = (s) => Boolean(typeof s.score === 'number' || s.notes || s
 // Seasons and episodes made by hand that TMDB doesn't know are dropped, unless you put something in them.
 export function mergeScan(t, s) {
   const counts = { seasons: 0, episodes: 0 };
-  t.tmdbId = s.tmdbId;
-  t.tmdbType = s.tmdbType;
+  if (s.source === 'rawg') {
+    t.rawgId = s.rawgId;
+    t.rawgSlug = s.rawgSlug || '';
+    t.kind = 'game';
+    if (s.available.length) t.available = s.available;
+  } else {
+    t.tmdbId = s.tmdbId;
+    t.tmdbType = s.tmdbType;
+    if (t.kind === 'game' || (s.tmdbType === 'tv' && t.kind === 'movie')) t.kind = s.kind;
+    if (s.tmdbType === 'movie' && hasEpisodes(t)) t.kind = 'movie';
+  }
   t.scannedAt = new Date().toISOString();
-  if (s.tmdbType === 'tv' && t.kind === 'movie') t.kind = s.kind;
-  if (s.tmdbType === 'movie' && hasEpisodes(t)) t.kind = 'movie';
   t.title = s.title || t.title;
   t.titleQc = s.titleQc;
   t.year = s.year || t.year;
@@ -347,8 +361,9 @@ export function mergeScan(t, s) {
   if (s.backdrop) t.backdrop = s.backdrop;
   if (s.cast.length) t.cast = s.cast;
   t.watchLink = s.watchLink || '';
-  const scanned = s.providers.map((name) => ({ name, source: 'tmdb' }));
-  const mine = t.providers.filter((p) => p.source !== 'tmdb' && !s.providers.some((n) => n.toLowerCase() === p.name.toLowerCase()));
+  const source = s.source === 'rawg' ? 'rawg' : 'tmdb';
+  const scanned = s.providers.map((p) => ({ name: p.name, source, url: p.url || '' }));
+  const mine = t.providers.filter((p) => p.source === 'manual' && !scanned.some((n) => n.name.toLowerCase() === p.name.toLowerCase()));
   t.providers = [...scanned, ...mine];
   if (!s.seasons) return counts;
   for (const ss of s.seasons) {

@@ -3,6 +3,8 @@ import * as M from './model.js';
 import * as store from './store.js';
 import * as V from './views.js';
 import * as tmdb from './tmdb.js';
+import * as rawg from './rawg.js';
+import { animeGenres } from './anilist.js';
 import { esc } from './ui.js';
 import { morphChildren } from './morph.js';
 
@@ -32,7 +34,8 @@ const state = {
     addSeasonOpen: false,
     homeScore: {},
     focusAfter: null,
-    rescanning: null
+    rescanning: null,
+    heroId: null
   }
 };
 
@@ -476,7 +479,7 @@ function kindFromPage(kind) {
 
 function openAdd(kind, title = '') {
   const k = kindFromPage(kind) || 'movie';
-  openDialog(V.addDialog(k, { title, noKey: !state.settings.tmdbKey }), '#add-title');
+  openDialog(V.addDialog(k, { title, noKey: k === 'game' ? !state.settings.rawgKey : !state.settings.tmdbKey }), '#add-title');
   if (title) checkDuplicate(title);
 }
 
@@ -752,6 +755,7 @@ async function watchNext(id) {
   nx.ep.watched = M.today();
   if (typeof score === 'number') nx.ep.score = score;
   delete state.ui.homeScore[id];
+  state.ui.heroId = id;
   const statusText = autoStatus(t);
   render();
   toast(t.status === 'completed' ? `${t.title} · completed` : `${code} logged${typeof score === 'number' ? ' · ' + score.toFixed(1) : ''}`);
@@ -959,7 +963,7 @@ async function removeTag(tag) {
 
 /* ---------- the Scan ---------- */
 
-const scan = { mode: 'add', linkId: null, linkTitle: '', query: '', results: [], loading: false, error: '', busy: '', status: 'watchlist', kindHint: '', timer: null, controller: null };
+const scan = { mode: 'add', linkId: null, linkTitle: '', query: '', results: [], notes: [], sources: [], loading: false, error: '', busy: '', status: 'watchlist', kindHint: '', timer: null, controller: null };
 
 function stopScanSearch() {
   clearTimeout(scan.timer);
@@ -973,9 +977,17 @@ function refreshScan() {
 }
 
 function openScan(kind, link) {
-  const k = kindFromPage(kind);
-  if (k === 'game' && !link) { openAdd('game'); return; }
-  if (!state.settings.tmdbKey) { openAdd(k); return; }
+  const k = link ? link.kind : kindFromPage(kind);
+  const keys = { tmdb: state.settings.tmdbKey, rawg: state.settings.rawgKey };
+  let sources;
+  if (link) sources = [k === 'game' ? 'rawg' : 'tmdb'].filter((x) => keys[x]);
+  else if (k === 'game') sources = keys.rawg ? ['rawg', ...(keys.tmdb ? ['tmdb'] : [])] : [];
+  else sources = ['tmdb', 'rawg'].filter((x) => keys[x]);
+  if (!sources.length) {
+    if (link) toast(`Add your ${k === 'game' ? 'RAWG' : 'TMDB'} key in Settings to scan.`, { action: { label: 'Settings', run: () => go('#/settings') } });
+    else openAdd(k);
+    return;
+  }
   stopScanSearch();
   Object.assign(scan, {
     mode: link ? 'link' : 'add',
@@ -983,6 +995,8 @@ function openScan(kind, link) {
     linkTitle: link ? link.title : '',
     query: link ? link.title : '',
     results: [],
+    notes: [],
+    sources,
     loading: false,
     error: '',
     busy: '',
@@ -1008,6 +1022,7 @@ async function runSearch() {
   scan.controller = null;
   if (q.length < 2) {
     scan.results = [];
+    scan.notes = [];
     scan.loading = false;
     refreshScan();
     return;
@@ -1017,20 +1032,47 @@ async function runSearch() {
   scan.loading = true;
   scan.error = '';
   refreshScan();
-  try {
-    const results = await tmdb.search(q, state.settings.tmdbKey, controller.signal);
-    if (controller.signal.aborted) return;
-    // Opened from a category page: that kind first.
-    const hint = scan.kindHint;
-    scan.results = hint ? [...results.filter((r) => r.kind === hint), ...results.filter((r) => r.kind !== hint)] : results;
-  } catch (err) {
-    if (err && err.name === 'AbortError') return;
-    scan.results = [];
-    scan.error = err && err.message ? err.message : 'The search failed.';
-  }
-  if (scan.controller === controller) scan.controller = null;
+  // Both services at once; if one is down, the other still answers.
+  const out = await Promise.all(scan.sources.map((src) => {
+    const job = src === 'rawg' ? rawg.search(q, state.settings.rawgKey, controller.signal) : tmdb.search(q, state.settings.tmdbKey, controller.signal);
+    return job.then((results) => ({ src, results }), (error) => ({ src, error }));
+  }));
+  if (controller.signal.aborted) return;
+  scan.controller = null;
   scan.loading = false;
+  const failed = out.filter((o) => o.error);
+  const answered = out.filter((o) => !o.error);
+  if (!answered.length) {
+    scan.results = [];
+    scan.notes = [];
+    scan.error = failed[0].error && failed[0].error.message ? failed[0].error.message : 'The search failed.';
+    refreshScan();
+    return;
+  }
+  scan.notes = failed.map((o) => (o.error && o.error.message) || `${o.src.toUpperCase()} did not answer.`);
+  const of = (src) => (answered.find((o) => o.src === src) || { results: [] }).results;
+  const hint = scan.kindHint;
+  let list = hint === 'game' ? [...of('rawg'), ...of('tmdb')] : [...of('tmdb'), ...of('rawg')];
+  if (hint && hint !== 'game') list = [...list.filter((r) => r.kind === hint), ...list.filter((r) => r.kind !== hint)];
+  scan.results = list;
   refreshScan();
+}
+
+// TMDB says "Animation"; AniList knows the real anime genres. If it doesn't answer, TMDB's stay.
+async function addAnimeGenres(data) {
+  const genres = await animeGenres([data.original, data.title], data.year);
+  if (genres) data.genres = genres;
+}
+
+async function fetchScan(type, id, wantAnime) {
+  if (type === 'game') return rawg.fetchGame(id, state.settings.rawgKey);
+  const data = await tmdb.fetchTitle(type, id, state.settings.tmdbKey, (step) => { scan.busy = step; refreshScan(); });
+  if (data.tmdbType === 'tv' && (data.kind === 'anime' || wantAnime)) {
+    scan.busy = 'Reading anime genres…';
+    refreshScan();
+    await addAnimeGenres(data);
+  }
+  return data;
 }
 
 async function pickScan(type, id, openId) {
@@ -1039,18 +1081,19 @@ async function pickScan(type, id, openId) {
     go('#/title/' + encodeURIComponent(openId));
     return;
   }
-  if (scan.busy || (type !== 'movie' && type !== 'tv') || !Number.isInteger(id)) return;
+  if (scan.busy || !['movie', 'tv', 'game'].includes(type) || !Number.isInteger(id)) return;
   const statusBox = document.getElementById('scan-status');
   const status = statusBox && M.STATUSES.includes(statusBox.value) ? statusBox.value : 'watchlist';
   const mode = scan.mode;
   const linkId = scan.linkId;
+  const linked = mode === 'link' ? byId(linkId) : null;
   stopScanSearch();
   scan.busy = 'Scanning…';
   scan.error = '';
   refreshScan();
   let data;
   try {
-    data = await tmdb.fetchTitle(type, id, state.settings.tmdbKey, (step) => { scan.busy = step; refreshScan(); });
+    data = await fetchScan(type, id, Boolean(linked && linked.kind === 'anime'));
   } catch (err) {
     scan.busy = '';
     scan.error = err && err.message ? err.message : 'The scan failed.';
@@ -1058,7 +1101,7 @@ async function pickScan(type, id, openId) {
     return;
   }
   scan.busy = '';
-  const already = M.live(state.titles).find((t) => t.tmdbId === data.tmdbId && t.tmdbType === data.tmdbType && t.id !== linkId);
+  const already = M.live(state.titles).find((t) => t.id !== linkId && (data.source === 'rawg' ? t.rawgId === data.rawgId : t.tmdbId === data.tmdbId && t.tmdbType === data.tmdbType));
   if (already) {
     closeDialog();
     go('#/title/' + encodeURIComponent(already.id));
@@ -1066,17 +1109,17 @@ async function pickScan(type, id, openId) {
     return;
   }
   const size = data.seasons ? ` · ${data.seasons.length} season${data.seasons.length === 1 ? '' : 's'}, ${data.seasons.reduce((n, x) => n + x.episodes.length, 0)} episodes` : '';
+  const via = data.source === 'rawg' ? 'RAWG' : 'TMDB';
   if (mode === 'link') {
-    const t = byId(linkId);
     closeDialog();
-    if (!t) return;
-    M.mergeScan(t, data);
+    if (!linked) return;
+    M.mergeScan(linked, data);
     state.ui.openSeasons.clear();
-    openDefaultSeason(t);
+    openDefaultSeason(linked);
     render();
-    document.title = `${t.title} · Rewinder`;
-    toast(`${t.title} scanned${size}`);
-    await commit(t, `Scanned with TMDB${size}`);
+    document.title = `${linked.title} · Rewinder`;
+    toast(`${linked.title} scanned${size}`);
+    await commit(linked, `Scanned with ${via}${size}`);
     return;
   }
   const t = M.newTitle({ kind: data.kind, status });
@@ -1093,19 +1136,26 @@ async function pickScan(type, id, openId) {
 
 async function rescan() {
   const t = cur();
-  if (!t || t.kind === 'game' || state.ui.rescanning) return;
-  if (!state.settings.tmdbKey) {
-    toast('Add your TMDB key in Settings to scan.', { action: { label: 'Settings', run: () => go('#/settings') } });
+  if (!t || state.ui.rescanning) return;
+  const game = t.kind === 'game';
+  if (!(game ? state.settings.rawgKey : state.settings.tmdbKey)) {
+    toast(`Add your ${game ? 'RAWG' : 'TMDB'} key in Settings to scan.`, { action: { label: 'Settings', run: () => go('#/settings') } });
     return;
   }
-  if (!t.tmdbId) {
+  if (!(game ? t.rawgId : t.tmdbId)) {
     openScan(t.kind, t);
     return;
   }
   state.ui.rescanning = t.id;
   render();
   try {
-    const data = await tmdb.fetchTitle(t.tmdbType, t.tmdbId, state.settings.tmdbKey);
+    let data;
+    if (game) {
+      data = await rawg.fetchGame(t.rawgId, state.settings.rawgKey);
+    } else {
+      data = await tmdb.fetchTitle(t.tmdbType, t.tmdbId, state.settings.tmdbKey);
+      if (data.tmdbType === 'tv' && (data.kind === 'anime' || t.kind === 'anime')) await addAnimeGenres(data);
+    }
     const counts = M.mergeScan(t, data);
     const news = [counts.seasons ? `${counts.seasons} new season${counts.seasons === 1 ? '' : 's'}` : '', counts.episodes ? `${counts.episodes} new episode${counts.episodes === 1 ? '' : 's'}` : ''].filter(Boolean).join(', ');
     toast(news ? `${t.title} · ${news}` : `${t.title} is up to date`);
@@ -1287,6 +1337,10 @@ const actions = {
     await saveSettings();
   },
   'watch-next': (el) => watchNext(el.dataset.id),
+  'hero-go': (el) => {
+    state.ui.heroId = el.dataset.id;
+    render();
+  },
   'list-cat': (el) => { state.ui.list.cat = el.dataset.cat; render(); },
   'list-clear': (el) => {
     const k = el.dataset.key;

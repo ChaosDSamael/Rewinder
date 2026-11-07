@@ -25,7 +25,7 @@ export function header(state) {
 ${r.name === 'list' ? '' : `<div class="search">${icon.search}<label class="sr" for="q-head">Search your list</label><input id="q-head" type="search" placeholder="Titles, actors, genres, tags" autocomplete="off" spellcheck="false"></div>`}
 ${state.canInstall ? `<button type="button" class="btn btn-ghost" data-action="install">${icon.install}Install</button>` : ''}
 <button type="button" class="icon-btn" data-action="spoiler" aria-pressed="${spoiler}" aria-label="Spoiler mode" title="${spoiler ? 'Spoiler mode is on: your notes are blurred' : 'Spoiler mode: blur your notes'}">${icon.eyeOff}</button>
-<a class="icon-btn" href="#/settings" aria-label="Settings" title="Settings"${r.name === 'settings' ? ' aria-current="page"' : ''}>${icon.sliders}</a>
+<a class="icon-btn icon-settings" href="#/settings" aria-label="${needsBackup(state) ? 'Settings, a backup is due' : 'Settings'}" title="${needsBackup(state) ? 'Settings · time for a backup' : 'Settings'}"${r.name === 'settings' ? ' aria-current="page"' : ''}>${icon.sliders}${needsBackup(state) ? '<span class="ping" aria-hidden="true"></span>' : ''}</a>
 <button type="button" class="btn btn-primary btn-scan" data-action="add">${icon.radar}<span>Scan</span><span class="sweep" aria-hidden="true"></span></button>
 </div>
 </header>`;
@@ -95,7 +95,19 @@ function segments(t, nx) {
   return `<div class="segs" aria-hidden="true" style="--n:${list.length}">${list.map((x) => `<span class="${x.ep.watched ? 'w' : nx && x.ep === nx.ep ? 'nx' : M.isAired(x.ep) ? '' : 'f'}"></span>`).join('')}</div>`;
 }
 
-function heroContinue(t, state) {
+function heroNav(t, heroes) {
+  if (heroes.length < 2) return '';
+  const at = heroes.indexOf(t);
+  const prev = heroes[(at - 1 + heroes.length) % heroes.length];
+  const next = heroes[(at + 1) % heroes.length];
+  return `<div class="hero-nav" role="group" aria-label="Series in progress">
+<button type="button" class="icon-btn hero-arrow" id="hero-prev" data-action="hero-go" data-id="${esc(prev.id)}" aria-label="Previous: ${esc(prev.title)}" title="${esc(prev.title)}">${icon.chevLeft}</button>
+<span class="hero-count" aria-live="polite">${M.pad2(at + 1)} / ${M.pad2(heroes.length)}</span>
+<button type="button" class="icon-btn hero-arrow" id="hero-next" data-action="hero-go" data-id="${esc(next.id)}" aria-label="Next: ${esc(next.title)}" title="${esc(next.title)}">${icon.chevRight}</button>
+</div>`;
+}
+
+function heroContinue(t, state, heroes = [t]) {
   const nx = M.nextEpisode(t);
   const p = M.progress(t);
   const score = M.effectiveScore(t);
@@ -115,6 +127,7 @@ ${segments(t, nx)}
 <div class="hero-rate"><span class="label">Rate ${code}</span>${rater({ key: 'next:' + t.id, value: typeof pending === 'number' ? pending : null, label: `Your score for ${code}` })}</div>
 <div class="actions"><button type="button" class="btn btn-primary" data-action="watch-next" data-id="${esc(t.id)}">${icon.check}Watched</button><a class="btn btn-ghost" href="${tHref(t)}">Open</a></div>
 </div>
+${heroNav(t, heroes)}
 </section>`;
 }
 
@@ -130,20 +143,16 @@ function heroWelcome() {
 </section>`;
 }
 
-function backupBanner(state, count) {
+// No backup yet: remind once the list is worth something. Otherwise: once a week, if something changed.
+export function needsBackup(state) {
   const s = state.settings;
   const changes = s.changesSinceBackup || 0;
   const now = Date.now();
   const last = s.lastBackupAt ? Date.parse(s.lastBackupAt) : 0;
-  if (!count) return '';
-  if (s.backupSnoozeUntil && Date.parse(s.backupSnoozeUntil) > now) return '';
-  // No backup yet: remind once the list is worth something. Otherwise: once a week, if something changed.
-  if (!last && changes < 15) return '';
-  if (last && (changes < 5 || now - last < 7 * 864e5)) return '';
-  const text = last
-    ? `Last backup ${M.fmtDate(s.lastBackupAt)} · ${plural(s.changesSinceBackup, 'change')} since.`
-    : 'No backup yet. Your list only lives in this browser.';
-  return `<div class="banner" data-key="banner" role="region" aria-label="Backup reminder"><span class="banner-text">${icon.download}<span>${esc(text)}</span></span><span class="actions"><button type="button" class="btn btn-primary btn-sm" data-action="export">Download backup</button><button type="button" class="btn btn-ghost btn-sm" data-action="backup-later">Later</button></span></div>`;
+  if (!M.live(state.titles).length) return false;
+  if (s.backupSnoozeUntil && Date.parse(s.backupSnoozeUntil) > now) return false;
+  if (!last) return changes >= 15;
+  return changes >= 5 && now - last >= 7 * 864e5;
 }
 
 function rowSection(row) {
@@ -154,17 +163,19 @@ function rowSection(row) {
 </section>`;
 }
 
-function pickHero(all) {
-  return all.filter((t) => {
+// Series in progress with an episode out to watch, most recent first.
+export function heroList(titles) {
+  return M.live(titles).filter((t) => {
     if (!M.hasEpisodes(t) || t.status !== 'progress') return false;
     const nx = M.nextEpisode(t);
     return Boolean(nx && M.isAired(nx.ep));
-  }).sort(byActivity)[0] || null;
+  }).sort(byActivity);
 }
 
 export function homeView(state) {
   const all = M.live(state.titles);
-  const hero = pickHero(all);
+  const heroes = heroList(state.titles);
+  const hero = heroes.find((t) => t.id === state.ui.heroId) || heroes[0] || null;
   const rows = [
     { id: 'continue', title: 'Continue', items: all.filter((t) => t.status === 'progress' && t !== hero).sort(byActivity), see: { status: 'progress' } },
     { id: 'new', title: 'New Seasons', items: all.filter((t) => t.newSeason !== null).sort(byActivity) },
@@ -174,8 +185,7 @@ export function homeView(state) {
   ];
   for (const g of M.topGenres(all)) rows.push({ id: 'g-' + g.toLowerCase().replace(/[^a-z0-9]+/g, '-'), title: g, items: all.filter((t) => t.genres.includes(g)).sort(byActivity), see: { q: g } });
   return `<div class="page page-home">
-${backupBanner(state, all.length)}
-${hero ? heroContinue(hero, state) : all.length ? '' : heroWelcome()}
+${hero ? heroContinue(hero, state, heroes) : all.length ? '' : heroWelcome()}
 ${rows.filter((r) => r.items.length).map(rowSection).join('')}
 </div>`;
 }
@@ -348,7 +358,7 @@ ${form}
 }
 
 function gameSection(t) {
-  const plats = [...new Set([...M.GAME_PLATFORMS, ...t.platforms])];
+  const plats = [...new Set([...(t.available.length ? t.available : M.GAME_PLATFORMS), ...t.platforms])];
   const mark = (key, label) => {
     const on = t.game[key];
     return `<button type="button" class="mark${on ? ' on' : ''}" data-action="game-mark" data-mark="${key}" aria-pressed="${Boolean(on)}">${icon.check}<span class="mark-text"><b>${label}</b><small>${on ? 'Done ' + esc(M.fmtDate(on, true)) : 'Not yet'}</small></span></button>`;
@@ -385,9 +395,10 @@ function providersPanel(t, state) {
   const known = [...new Set([...(game ? M.STORES : M.STREAMING), ...seen])];
   return `<section class="panel" aria-labelledby="h-watch">
 <div class="panel-head"><h2 class="panel-title" id="h-watch">${game ? 'Where to buy' : 'Where to watch'}</h2><span class="panel-sub">Canada</span></div>
-${t.providers.length ? `<div class="chips">${t.providers.map((p) => `<span class="chip-x"><span class="chip-x-label">${esc(p.name)}</span><button type="button" class="x-btn" data-action="prov-remove" data-name="${esc(p.name)}" aria-label="Remove ${esc(p.name)}">${icon.x}</button></span>`).join('')}</div>` : ''}
+${t.providers.length ? `<div class="chips">${t.providers.map((p) => `<span class="chip-x">${p.url ? `<a class="chip-x-label chip-x-link" href="${esc(p.url)}" target="_blank" rel="noopener" title="Open ${esc(p.name)}">${esc(p.name)} ↗</a>` : `<span class="chip-x-label">${esc(p.name)}</span>`}<button type="button" class="x-btn" data-action="prov-remove" data-name="${esc(p.name)}" aria-label="Remove ${esc(p.name)}">${icon.x}</button></span>`).join('')}</div>` : ''}
 <form class="inline-form" data-form="prov-add" autocomplete="off"><label class="sr" for="prov-input">Add a platform</label><input id="prov-input" name="name" class="input input-sm" list="prov-list" placeholder="${game ? 'Steam, PS Store…' : 'Netflix, Crave…'}" maxlength="60" data-keep><button type="submit" class="btn btn-dashed btn-sm">${icon.plus}Add</button></form>
 <datalist id="prov-list">${options(known)}</datalist>
+${t.rawgId ? `<p class="credit">Game data: <a class="watch-link" href="https://rawg.io/games/${esc(t.rawgSlug || String(t.rawgId))}" target="_blank" rel="noopener">RAWG ↗</a></p>` : ''}
 ${t.providers.some((p) => p.source === 'tmdb') || t.watchLink ? `<p class="credit">Streaming data: JustWatch${t.watchLink ? ` · <a class="watch-link" href="${esc(t.watchLink)}" target="_blank" rel="noopener">See offers ↗</a>` : ''}</p>` : ''}
 </section>`;
 }
@@ -433,7 +444,9 @@ export function historyPanel(entries) {
 
 function scanButton(t, state) {
   if (state.ui.rescanning === t.id) return `<button type="button" class="btn btn-line" disabled>${icon.radar}Scanning…</button>`;
-  return `<button type="button" class="btn btn-line" data-action="rescan" title="${t.tmdbId ? 'Refresh from TMDB: new episodes, dates, where to watch' : 'Find it on TMDB and fill in the rest'}">${icon.radar}${t.tmdbId ? 'Rescan' : 'Scan'}</button>`;
+  const linked = t.kind === 'game' ? t.rawgId : t.tmdbId;
+  const source = t.kind === 'game' ? 'RAWG' : 'TMDB';
+  return `<button type="button" class="btn btn-line" data-action="rescan" title="${linked ? `Refresh from ${source}` : `Find it on ${source} and fill in the rest`}">${icon.radar}${linked ? 'Rescan' : 'Scan'}</button>`;
 }
 
 export function titleView(state, t) {
@@ -464,7 +477,7 @@ ${t.overview ? `<p class="overview">${esc(t.overview)}</p>` : ''}
 ${watchAction(t)}
 <button type="button" class="icon-btn fav-btn" data-action="fav" aria-pressed="${t.fav}" aria-label="Favorite" title="${t.fav ? 'In your favorites' : 'Add to favorites'}">${t.fav ? icon.heartOn : icon.heart}</button>
 <button type="button" class="btn btn-ghost" data-action="edit">${icon.edit}Edit</button>
-${t.kind === 'game' ? '' : scanButton(t, state)}
+${scanButton(t, state)}
 </div>
 </div>
 </section>
@@ -514,14 +527,14 @@ export function settingsView(state) {
 
 <section class="set-sec" aria-labelledby="set-keys"><h2 class="h2" id="set-keys"><span class="sq" aria-hidden="true"></span>Web search keys</h2>
 <p class="set-text">The Scan uses free keys from TMDB (movies, TV shows, anime) and RAWG (games). Each person uses their own. Keys stay in this browser and never go into backups. Without keys, everything still works by hand.</p>
-<p class="set-text dim">Game search (RAWG) arrives in the next update. You can already paste that key too.</p>
+<p class="set-text dim">If rawg.io or themoviedb.org is down, the Scan says so: try again later, or add by hand.</p>
 ${keyField('tmdbKey', 'TMDB key', 'API key or API read access token', 'https://www.themoviedb.org/settings/api', s.tmdbKey)}
 ${keyField('rawgKey', 'RAWG key', 'API key', 'https://rawg.io/apidocs', s.rawgKey)}
 </section>
 
 <section class="set-sec" aria-labelledby="set-backup"><h2 class="h2" id="set-backup"><span class="sq" aria-hidden="true"></span>Backup</h2>
 <p class="set-text">Your list lives only in this browser. Download a backup now and then, and keep it somewhere safe, like a cloud folder. A backup also moves your list to another computer.</p>
-<p class="panel-sub">${s.lastBackupAt ? `Last backup ${esc(M.fmtDate(s.lastBackupAt, true))} · ${plural(s.changesSinceBackup || 0, 'change')} since` : 'No backup yet'}</p>
+${needsBackup(state) ? `<p class="reminder">${icon.download}<span>${s.lastBackupAt ? `Last backup ${esc(M.fmtDate(s.lastBackupAt, true))} · ${plural(s.changesSinceBackup || 0, 'change')} since.` : 'No backup yet.'} Time for one.</span><button type="button" class="link-btn" data-action="backup-later">Later</button></p>` : `<p class="panel-sub">${s.lastBackupAt ? `Last backup ${esc(M.fmtDate(s.lastBackupAt, true))} · ${plural(s.changesSinceBackup || 0, 'change')} since` : 'No backup yet'}</p>`}
 <div class="actions"><button type="button" class="btn btn-primary" data-action="export">${icon.download}Download backup</button><button type="button" class="btn btn-ghost" data-action="import">${icon.upload}Restore a backup</button></div>
 </section>
 
@@ -539,6 +552,7 @@ ${installBlock(state)}
 <ul class="credits">
 <li>This product uses the TMDB API but is not endorsed or certified by TMDB. <a href="https://www.themoviedb.org" target="_blank" rel="noopener">themoviedb.org</a></li>
 <li>Game data comes from <a href="https://rawg.io" target="_blank" rel="noopener">RAWG</a>.</li>
+<li>Anime genres come from <a href="https://anilist.co" target="_blank" rel="noopener">AniList</a>.</li>
 <li>Where to watch: data by JustWatch, through TMDB.</li>
 <li>Fonts: Chakra Petch, Inter and JetBrains Mono, under the SIL Open Font License.</li>
 </ul>
@@ -558,10 +572,10 @@ export const errorView = (message) => `<div class="page"><div class="empty-box">
 const kindPicker = (selected) => `<fieldset class="seg"><legend class="label">Category</legend><div class="seg-opts">${M.KINDS.map((k) => `<label class="seg-opt"><input type="radio" name="kind" value="${k}"${k === selected ? ' checked' : ''}><span>${M.KIND_LABEL[k]}</span></label>`).join('')}</div></fieldset>`;
 
 export function addDialog(kind, { title = '', noKey = false } = {}) {
-  const note = noKey
+  const note = noKey && kind !== 'game'
     ? 'Tip: add your TMDB key in Settings and the Scan fills in posters, episodes and cast for you.'
-    : kind === 'game'
-      ? 'Game search (RAWG) arrives in the next update. For now, games go in by hand.'
+    : kind === 'game' && noKey
+      ? 'Tip: add your RAWG key in Settings and the Scan fills in games for you.'
       : 'Add it by hand. Later, Scan on its page can fill in the rest.';
   return `<form class="dlg-form" data-form="add" novalidate autocomplete="off">
 <div class="dlg-head"><span class="eyebrow">// Manual add</span><h2 class="dlg-title" id="dlg-title">Add a title</h2></div>
@@ -613,11 +627,12 @@ export function confirmDialog({ title, body, yes = 'Confirm', danger = false }) 
 export function scanResults(scan, titles) {
   if (scan.busy) return `<div class="scan-wait"><span class="scan-line" aria-hidden="true"></span>${icon.radar}<span>${esc(scan.busy)}</span></div>`;
   if (scan.error) return `<p class="dlg-error scan-msg">${esc(scan.error)}</p>`;
-  if (scan.loading) return '<p class="scan-hint">Searching TMDB…</p>';
-  if (scan.query.trim().length < 2) return '<p class="scan-hint">Type a title. Results come from TMDB.</p>';
-  if (!scan.results.length) return `<p class="scan-hint">Nothing found on TMDB.${scan.mode === 'link' ? ' Try another spelling.' : ' Try another spelling, or add it by hand.'}</p>`;
-  return `<ul class="scan-list">${scan.results.map((r) => {
-    const mine = titles.find((t) => t.tmdbId === r.id && t.tmdbType === r.type && !t.deletedAt && t.id !== scan.linkId);
+  const notes = (scan.notes || []).map((n) => `<p class="scan-note">${esc(n)}</p>`).join('');
+  if (scan.loading) return '<p class="scan-hint">Searching…</p>';
+  if (scan.query.trim().length < 2) return `<p class="scan-hint">Type a title. Results come from ${scan.sources.map((x) => x.toUpperCase()).join(' and ')}.</p>`;
+  if (!scan.results.length) return `${notes}<p class="scan-hint">Nothing found.${scan.mode === 'link' ? ' Try another spelling.' : ' Try another spelling, or add it by hand.'}</p>`;
+  return `${notes}<ul class="scan-list">${scan.results.map((r) => {
+    const mine = titles.find((t) => !t.deletedAt && t.id !== scan.linkId && (r.type === 'game' ? t.rawgId === r.id : t.tmdbId === r.id && t.tmdbType === r.type));
     const sub = [M.KIND_LABEL[r.kind], r.year, r.original].filter(Boolean).join(' · ');
     return `<li><button type="button" class="scan-item" data-action="scan-pick" data-type="${r.type}" data-id="${r.id}"${mine ? ` data-open="${esc(mine.id)}"` : ''}>
 <span class="scan-thumb" style="background:${M.artFor({ title: r.title })}" aria-hidden="true">${r.poster ? `<img src="${esc(r.poster)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}</span>
@@ -632,10 +647,10 @@ export function scanDialog(scan, titles) {
 <div class="dlg-head"><span class="eyebrow">// Scan</span><h2 class="dlg-title" id="dlg-title">${link ? `Find ${esc(scan.linkTitle)}` : 'Add a title'}</h2></div>
 ${link ? '<p class="dlg-note">Pick the right one: posters, episodes, dates and cast fill in. Your checks, scores and notes stay.</p>' : ''}
 <form class="scan-bar" data-form="scan-search" role="search" autocomplete="off">
-<div class="search scan-search">${icon.search}<label class="sr" for="scan-q">Search TMDB</label><input id="scan-q" type="search" name="q" value="${esc(scan.query)}" placeholder="Movie, TV show or anime" spellcheck="false"></div>
+<div class="search scan-search">${icon.search}<label class="sr" for="scan-q">Search</label><input id="scan-q" type="search" name="q" value="${esc(scan.query)}" placeholder="${scan.sources.includes('tmdb') && scan.sources.includes('rawg') ? 'Movie, TV show, anime or game' : scan.sources.includes('rawg') ? 'Game' : 'Movie, TV show or anime'}" spellcheck="false"></div>
 ${link ? '' : `<label class="sr" for="scan-status">Status</label><select id="scan-status" class="select" name="status">${M.STATUSES.map((s) => `<option value="${s}"${s === scan.status ? ' selected' : ''}>${M.STATUS_LABEL[s]}</option>`).join('')}</select>`}
 </form>
 <div class="scan-results" id="scan-results" aria-live="polite">${scanResults(scan, titles)}</div>
-<div class="dlg-actions scan-foot"><span class="scan-credit">Search by TMDB</span><span class="actions">${link ? '' : '<button type="button" class="btn btn-dashed" data-action="scan-manual">Add it by hand</button>'}<button type="button" class="btn btn-ghost" data-action="dlg-close">Close</button></span></div>
+<div class="dlg-actions scan-foot"><span class="scan-credit">Search by ${scan.sources.map((x) => x === 'tmdb' ? '<a href="https://www.themoviedb.org" target="_blank" rel="noopener">TMDB</a>' : '<a href="https://rawg.io" target="_blank" rel="noopener">RAWG</a>').join(' · ')}</span><span class="actions">${link ? '' : '<button type="button" class="btn btn-dashed" data-action="scan-manual">Add it by hand</button>'}<button type="button" class="btn btn-ghost" data-action="dlg-close">Close</button></span></div>
 </div>`;
 }
