@@ -743,6 +743,39 @@ async function purgeExpired() {
   }
 }
 
+// Once, for titles saved Completed before Completed meant seen: the real date is not known.
+async function fixCompletedSeen() {
+  if (state.settings.seenFixed) return;
+  for (const t of M.live(state.titles)) {
+    if (t.status !== 'completed') continue;
+    let line = '';
+    if (t.kind === 'movie' && !t.views.length) {
+      t.views.push({ date: 'unknown' });
+      line = 'Counted as seen (Completed) · date unknown';
+    } else if (t.kind === 'game' && !t.game.story && !t.game.full) {
+      t.game.story = 'unknown';
+      line = 'Story counted as done (Completed) · date unknown';
+    }
+    if (!line) continue;
+    try {
+      // Another window may have done it a moment ago.
+      const saved = await store.getTitle(t.id);
+      if (saved && ((t.kind === 'movie' && saved.views && saved.views.length) || (t.kind === 'game' && saved.game && (saved.game.story || saved.game.full)))) {
+        if (t.kind === 'movie') t.views = saved.views;
+        else t.game = saved.game;
+        continue;
+      }
+      await store.putTitle(t);
+      await store.addHistory(t.id, line);
+    } catch (err) {
+      console.warn('Could not update', t.title, err);
+      return;
+    }
+  }
+  state.settings.seenFixed = true;
+  await saveSettings();
+}
+
 /* ---------- actions: ratings ---------- */
 
 function liveRate(el) {
@@ -2237,6 +2270,7 @@ async function start() {
   applyTheme();
   state.ready = true;
   await purgeExpired();
+  if (!state.error) await fixCompletedSeen();
   if (!state.error && !state.settings.onboarded && !M.live(state.titles).length && !location.hash.replace(/^#\/?/, '')) {
     history.replaceState(null, '', '#/welcome');
   }

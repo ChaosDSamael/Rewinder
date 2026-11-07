@@ -30,6 +30,7 @@ export const DEFAULT_SETTINGS = {
   changesSinceBackup: 0,
   backupSnoozeUntil: null,
   onboarded: false,
+  seenFixed: false,
   lastSeasonCheck: null,
   folderBackupAt: null
 };
