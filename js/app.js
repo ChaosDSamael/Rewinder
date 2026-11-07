@@ -39,6 +39,11 @@ const state = {
     friendsOpen: false,
     friendTab: 'common',
     friendAll: false,
+    guideTab: null,
+    tvDetail: null,
+    tvShow: null,
+    tvSpin: false,
+    tvKind: 'all',
     rescanning: null,
     heroId: null,
     heroDir: null
@@ -72,6 +77,7 @@ function view() {
   if (r.name === 'settings') return V.settingsView(state);
   if (r.name === 'import') return V.importView(state);
   if (r.name === 'friend') return V.friendView(state, friendById(r.id));
+  if (r.name === 'guides') return V.guidesView(state);
   return V.notFoundView();
 }
 
@@ -89,14 +95,17 @@ function render() {
   root.classList.toggle('spoiler-on', Boolean(state.settings.spoiler));
   root.classList.toggle('scan-off', !state.settings.scanlines);
   const tpl = document.createElement('template');
+  const tv = r.name === 'tv' && state.ready && !state.error;
+  document.body.classList.toggle('tv-mode', tv);
   tpl.innerHTML = r.name === 'welcome' && state.ready && !state.error
     ? `<main id="main" tabindex="-1">${V.guideView(state)}</main>`
-    : V.header(state) + `<main id="main" tabindex="-1">${view()}</main>` + V.footer();
+    : tv ? `<main id="main" tabindex="-1">${V.tvView(state)}</main>`
+      : V.header(state) + `<main id="main" tabindex="-1">${view()}</main>` + V.footer() + V.tabbar(state);
   morphChildren(root, tpl.content);
 
   const target = focusAfter || (hadFocus && !root.contains(document.activeElement) ? hadFocus : '');
   if (target) {
-    const el = document.getElementById(target);
+    const el = target === 'tv-first' ? document.querySelector('.tv-body [data-tv]') || document.querySelector('.tv [data-tv]') : document.getElementById(target);
     if (el) {
       el.focus({ preventScroll: true });
       if (focusAfter && typeof el.value === 'string') {
@@ -146,6 +155,8 @@ function parseRoute() {
   if (parts[0] === 'settings') return { name: 'settings' };
   if (parts[0] === 'import') return { name: 'import' };
   if (parts[0] === 'welcome') return { name: 'welcome' };
+  if (parts[0] === 'tv-mode') return { name: 'tv', section: parts[1] || 'top' };
+  if (parts[0] === 'guides') return { name: 'guides' };
   if (parts[0] === 'friend' && parts[1]) return { name: 'friend', id: parts[1] };
   return { name: 'notfound' };
 }
@@ -169,6 +180,11 @@ function onRoute() {
   const sameTitle = prev.name === 'title' && r.name === 'title' && prev.id === r.id;
   if (dlg.open) closeDialog();
   state.ui.friendsOpen = false;
+  state.ui.tvDetail = null;
+  if (r.name === 'guides' && prev.name !== 'guides' && !state.ui.guideTab) state.ui.guideTab = deviceGuide();
+  if (r.name === 'tv') state.ui.focusAfter = state.ui.focusAfter || 'tv-first';
+  if (r.name === 'tv' && prev.name !== 'tv') toastBox.replaceChildren();
+  if (prev.name === 'tv' && r.name !== 'tv' && document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
   if (!(prev.name === 'friend' && r.name === 'friend' && prev.id === r.id)) {
     state.ui.friendTab = 'common';
     state.ui.friendAll = false;
@@ -193,7 +209,8 @@ function onRoute() {
     : r.name === 'list' ? 'Full List · Rewinder'
       : r.name === 'browse' ? `${r.kind === 'all' ? 'All' : M.KIND_TAB[r.kind]} · Rewinder`
         : r.name === 'settings' ? 'Settings · Rewinder' : r.name === 'import' ? 'Import · Rewinder' : r.name === 'welcome' ? 'Welcome · Rewinder'
-          : r.name === 'friend' && friendById(r.id) ? `${friendById(r.id).name} · Rewinder` : 'Rewinder';
+          : r.name === 'friend' && friendById(r.id) ? `${friendById(r.id).name} · Rewinder`
+            : r.name === 'tv' ? 'TV mode · Rewinder' : r.name === 'guides' ? 'Guides · Rewinder' : 'Rewinder';
   if (t) loadHistory(t.id);
 }
 
@@ -413,7 +430,8 @@ function toast(message, { action, timeout = 4500 } = {}) {
   x.addEventListener('click', remove);
   el.append(x);
   toastBox.append(el);
-  while (toastBox.children.length > 3) toastBox.firstElementChild.remove();
+  const most = window.matchMedia && window.matchMedia('(max-width: 759px)').matches ? 2 : 3;
+  while (toastBox.children.length > most) toastBox.firstElementChild.remove();
   if (timeout) setTimeout(remove, timeout);
 }
 
@@ -1989,6 +2007,117 @@ function toggleFriends(open) {
   render();
 }
 
+/* ---------- TV mode, guides ---------- */
+
+// Phones and tablets open the guides on their own tab; computers on theirs.
+function deviceGuide() {
+  const touch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+  return touch ? 'phone' : 'pc';
+}
+
+function enterTv() {
+  const el = document.documentElement;
+  if (!document.fullscreenElement && el.requestFullscreen) el.requestFullscreen().catch(() => {});
+  go('#/tv-mode/top');
+}
+
+function exitTv() {
+  if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+  go('#/');
+}
+
+function openTvDetail(id) {
+  if (!state.titles.some((t) => t.id === id)) return;
+  state.ui.tvBack = document.activeElement && document.activeElement.id ? document.activeElement.id : null;
+  state.ui.tvBackKey = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.key || null : null;
+  state.ui.tvDetail = id;
+  state.ui.focusAfter = 'tv-back';
+  render();
+}
+
+function closeTvDetail() {
+  const key = state.ui.tvBackKey;
+  state.ui.tvDetail = null;
+  render();
+  const back = key ? document.querySelector(`[data-key="${CSS.escape(key)}"]`) : null;
+  if (back) back.focus();
+}
+
+// Tonight: a short spin through the watchlist, then one title.
+let spinTimer = null;
+function pickTonight() {
+  const pool = M.live(state.titles).filter((t) => t.status === 'watchlist' && (state.ui.tvKind === 'all' || t.kind === state.ui.tvKind));
+  if (!pool.length) return;
+  clearTimeout(spinTimer);
+  const final = pool[Math.floor(Math.random() * pool.length)];
+  const still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (still || pool.length === 1) {
+    state.ui.tvSpin = false;
+    state.ui.tvShow = final.id;
+    state.ui.focusAfter = 'tv-first';
+    render();
+    return;
+  }
+  let step = 0;
+  const steps = 14;
+  state.ui.tvSpin = true;
+  const tick = () => {
+    step++;
+    if (step >= steps) {
+      state.ui.tvSpin = false;
+      state.ui.tvShow = final.id;
+      render();
+      const again = document.querySelector('[data-action="tv-pick"]');
+      if (again) again.focus();
+      return;
+    }
+    state.ui.tvShow = pool[(Math.floor(Math.random() * pool.length) + step) % pool.length].id;
+    render();
+    spinTimer = setTimeout(tick, 50 + step * step * 1.2);
+  };
+  tick();
+}
+
+// The remote: arrows move to the nearest thing in that direction.
+// The arrows move to the nearest thing that way. Lined up beats off to the side,
+// and the opposite arrow goes back to where you came from.
+const TV_OPPOSITE = { ArrowUp: 'ArrowDown', ArrowDown: 'ArrowUp', ArrowLeft: 'ArrowRight', ArrowRight: 'ArrowLeft' };
+let tvLast = null;
+const tvGap = (a1, a2, b1, b2) => Math.max(0, Math.max(a1, b1) - Math.min(a2, b2));
+
+function tvMove(dir) {
+  const scope = document.querySelector('.tv-detail') || document.querySelector('.tv');
+  if (!scope) return;
+  const items = [...scope.querySelectorAll('[data-tv]')].filter((el) => !el.disabled && el.getClientRects().length);
+  if (!items.length) return;
+  const cur = items.includes(document.activeElement) ? document.activeElement : null;
+  if (!cur) { items[0].focus(); return; }
+  const a = cur.getBoundingClientRect();
+  const ax = a.left + a.width / 2;
+  const ay = a.top + a.height / 2;
+  let best = null;
+  if (tvLast && tvLast.to === cur && TV_OPPOSITE[tvLast.dir] === dir && items.includes(tvLast.from)) best = tvLast.from;
+  let bestScore = Infinity;
+  for (const el of best ? [] : items) {
+    if (el === cur) continue;
+    const b = el.getBoundingClientRect();
+    const dx = b.left + b.width / 2 - ax;
+    const dy = b.top + b.height / 2 - ay;
+    const across = dir === 'ArrowRight' || dir === 'ArrowLeft';
+    const main = dir === 'ArrowRight' ? dx : dir === 'ArrowLeft' ? -dx : dir === 'ArrowDown' ? dy : -dy;
+    if (main <= 1) continue;
+    const cross = across ? tvGap(a.top, a.bottom, b.top, b.bottom) : tvGap(a.left, a.right, b.left, b.right);
+    const score = main + cross * 3;
+    if (score < bestScore) { bestScore = score; best = el; }
+  }
+  if (!best) return;
+  tvLast = { from: cur, to: best, dir };
+  best.focus({ preventScroll: true });
+  best.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+}
+
+const TV_BACK_KEYS = new Set(['Escape', 'Backspace', 'GoBack', 'BrowserBack']);
+
 /* ---------- backup ---------- */
 
 async function exportBackup() {
@@ -2243,6 +2372,14 @@ const actions = {
   'view-add': () => addView(),
   'date-edit': (el) => editDate(el.dataset.key),
   'friends-toggle': () => toggleFriends(),
+  'search-open': () => { state.ui.focusAfter = 'q-list'; go('#/list'); },
+  'tv-enter': () => enterTv(),
+  'tv-exit': () => exitTv(),
+  'tv-open': (el) => openTvDetail(el.dataset.id),
+  'tv-close': () => closeTvDetail(),
+  'tv-pick': () => pickTonight(),
+  'tv-kind': (el) => { state.ui.tvKind = el.dataset.kind; state.ui.tvShow = null; state.ui.focusAfter = null; render(); },
+  'guide-tab': (el) => { state.ui.guideTab = el.dataset.tab; state.ui.focusAfter = `gd-${el.dataset.tab}`; render(); },
   'card-share': () => shareCard(),
   'card-pick': () => pickCard(),
   'friend-tab': (el) => {
@@ -2286,7 +2423,7 @@ const fail = (err) => {
 };
 
 document.addEventListener('click', (e) => {
-  if (state.ui.friendsOpen && !e.target.closest('.friends-wrap') && !dlg.open && document.contains(e.target)) {
+  if (state.ui.friendsOpen && !e.target.closest('.friends-wrap, [data-action="friends-toggle"]') && !dlg.open && document.contains(e.target)) {
     state.ui.friendsOpen = false;
     requestRender();
   }
@@ -2451,6 +2588,19 @@ document.addEventListener('submit', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
+  if (state.route.name === 'tv' && !dlg.open) {
+    if (e.key.startsWith('Arrow')) {
+      e.preventDefault();
+      tvMove(e.key);
+      return;
+    }
+    if (TV_BACK_KEYS.has(e.key) || e.keyCode === 10009 || e.keyCode === 461) {
+      e.preventDefault();
+      if (state.ui.tvDetail) closeTvDetail();
+      else exitTv();
+      return;
+    }
+  }
   // Escape closes the dialog in one press, even from a search box (which would otherwise just clear itself).
   if (e.key === 'Escape' && dlg.open && !e.defaultPrevented) {
     e.preventDefault();

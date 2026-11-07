@@ -38,8 +38,22 @@ function friendsButton(state) {
   const open = state.ui.friendsOpen;
   return `<div class="friends-wrap">
 <button type="button" class="icon-btn friends-btn" id="friends-btn" data-action="friends-toggle" aria-expanded="${open}" aria-controls="friends-pop" aria-label="Friends${n ? ', ' + friendCount(n) : ''}" title="Friends">${icon.bust}${n ? `<span class="count-badge" aria-hidden="true">${n}</span>` : ''}</button>
-${open ? friendsPanel(state) : ''}
+${open ? `<div class="sheet-scrim" data-action="friends-toggle" aria-hidden="true"></div>${friendsPanel(state)}` : ''}
 </div>`;
+}
+
+// Phones: the sections live under the thumb.
+export function tabbar(state) {
+  const r = state.route;
+  const n = state.friends.length;
+  const on = (yes) => (yes ? ' aria-current="page"' : '');
+  return `<nav class="tabbar" aria-label="Sections">
+<a class="tab" href="#/"${on(r.name === 'home')}>${icon.home}<span>Home</span></a>
+<a class="tab" href="#/all"${on(r.name === 'browse')}>${icon.grid}<span>All</span></a>
+<button type="button" class="tab tab-scan" data-action="add">${icon.radar}<span>Scan</span></button>
+<a class="tab" href="#/list"${on(r.name === 'list')}>${icon.rows}<span>List</span></a>
+<button type="button" class="tab" data-action="friends-toggle" aria-expanded="${state.ui.friendsOpen}" aria-label="Friends${n ? ', ' + friendCount(n) : ''}"${on(r.name === 'friend')}>${icon.bust}<span>Friends</span>${n ? `<span class="count-badge" aria-hidden="true">${n}</span>` : ''}</button>
+</nav>`;
 }
 
 function friendsPanel(state) {
@@ -76,6 +90,7 @@ export function header(state) {
 <div class="tools">
 ${friendsButton(state)}
 ${r.name === 'list' ? '' : `<div class="search">${icon.search}<label class="sr" for="q-head">Search your list</label><input id="q-head" type="search" placeholder="Titles, actors, directors, tags" autocomplete="off" spellcheck="false"></div>`}
+<button type="button" class="icon-btn only-phone" data-action="search-open" aria-label="Search your list">${icon.search}</button>
 ${state.canInstall ? `<button type="button" class="btn btn-ghost" data-action="install">${icon.install}Install</button>` : ''}
 <button type="button" class="icon-btn" data-action="spoiler" aria-pressed="${spoiler}" aria-label="Spoiler mode" title="${spoiler ? 'Spoiler mode is on: your notes are blurred' : 'Spoiler mode: blur your notes'}">${icon.eyeOff}</button>
 <a class="icon-btn icon-settings" href="#/settings" aria-label="${needsBackup(state) ? 'Settings, a backup is due' : 'Settings'}" title="${needsBackup(state) ? 'Settings · time for a backup' : 'Settings'}"${r.name === 'settings' ? ' aria-current="page"' : ''}>${icon.sliders}${needsBackup(state) ? '<span class="ping" aria-hidden="true"></span>' : ''}</a>
@@ -84,7 +99,7 @@ ${state.canInstall ? `<button type="button" class="btn btn-ghost" data-action="i
 </header>`;
 }
 
-export const footer = () => `<footer class="foot"><span>Rewinder · v${M.APP_VERSION} · Your list stays on this device</span><span>Data: <a href="https://www.themoviedb.org" target="_blank" rel="noopener">TMDB</a> · <a href="https://rawg.io" target="_blank" rel="noopener">RAWG</a> · Where to watch: JustWatch</span></footer>`;
+export const footer = () => `<footer class="foot"><span>Rewinder · v${M.APP_VERSION} · Your list stays on this device · <a href="#/guides">Guides</a> · <a href="#/tv-mode/top" data-action="tv-enter">TV mode</a></span><span>Data: <a href="https://www.themoviedb.org" target="_blank" rel="noopener">TMDB</a> · <a href="https://rawg.io" target="_blank" rel="noopener">RAWG</a> · Where to watch: JustWatch</span></footer>`;
 
 /* ---------- cards and tables ---------- */
 
@@ -314,7 +329,9 @@ export function browseView(state, kind) {
   const body = !all.length
     ? `<div class="empty-box"><p class="lead">${every ? 'Nothing here yet.' : `No ${KIND_PLURAL[kind]} yet.`}</p><button type="button" class="btn btn-primary" data-action="add"${every ? '' : ` data-kind="${kind}"`}>${icon.plus}${every ? 'Add a title' : `Add ${A_KIND[kind]}`}</button></div>`
     : view === 'wall' ? `<div class="wall">${list.map((t, i) => card(t, { kind: every, rank: state.ui.browseSort === 'score' && M.effectiveScore(t) !== null ? i + 1 : 0 })).join('')}</div>` : titleTable(list, { showKind: false });
+  const chip = (href, label, current) => `<a class="kind-chip" href="${href}"${current ? ' aria-current="page"' : ''}>${label}</a>`;
   return `<div class="page page-list">
+<nav class="kind-chips" aria-label="Kinds">${chip('#/all', 'All', every)}${M.KINDS.map((k) => chip('#/' + M.KIND_PATH[k], M.KIND_TAB[k], kind === k)).join('')}</nav>
 <div class="page-head"><div class="titles"><span class="eyebrow">// ${plural(all.length, 'title')}</span><h1 class="display display-md">${every ? 'All' : M.KIND_TAB[kind]}</h1></div>
 <div class="filter-tools">
 <label class="sr" for="sort-browse">Sort by</label><select id="sort-browse" class="select" data-filter="browseSort">${sortOptions(state.ui.browseSort)}</select>
@@ -678,7 +695,7 @@ ${trashed.length ? `<ul class="trash">${trashed.map((t) => `<li data-key="tr-${e
 
 <section class="set-sec" aria-labelledby="set-app"><h2 class="h2" id="set-app"><span class="sq" aria-hidden="true"></span>App</h2>
 ${installBlock(state)}
-<div class="actions"><button type="button" class="btn btn-ghost" data-action="guide-open">Open the start guide</button></div>
+<div class="actions"><button type="button" class="btn btn-ghost" data-action="guide-open">Open the start guide</button><a class="btn btn-ghost" href="#/guides">${icon.book}Guides: computer, phone, TV</a><button type="button" class="btn btn-ghost" data-action="tv-enter">${icon.tv}TV mode</button></div>
 <p class="panel-sub">${state.persisted ? 'Storage: protected, the browser will not clear your list on its own.' : 'Storage: standard. Install the app and keep backups to be safe.'}</p>
 </section>
 
@@ -860,6 +877,132 @@ export function friendView(state, f) {
 <div class="sec-head"><h2 class="h2"><span class="sq" aria-hidden="true"></span>${esc(title)}<span class="head-count">${list.length}</span></h2><span class="fr-hint">${esc(hint)}</span></div>
 ${shown.length ? `<ol class="fr-list">${shown.map((x, i) => (tab === 'picks' ? pickRow(x, i, f.name) : duelRow(x, f.name))).join('')}</ol>` : `<p class="empty-line">${esc(empty)}</p>`}
 ${list.length > shown.length ? `<button type="button" class="link-btn fr-more" data-action="friend-all">Show all ${list.length}</button>` : ''}
+</section>
+</div>`;
+}
+
+/* ---------- TV mode ---------- */
+
+function tvMeta(t) {
+  const score = M.effectiveScore(t);
+  return [score !== null ? `★ ${score.toFixed(1)}` : '', M.KIND_LABEL[t.kind], t.year].filter(Boolean).join(' · ');
+}
+
+function tvCard(t, rank = 0) {
+  return `<button type="button" class="tv-card" data-action="tv-open" data-id="${esc(t.id)}" data-tv data-key="tv-${esc(t.id)}" aria-label="${esc([rank ? `Number ${rank}` : '', t.title, tvMeta(t)].filter(Boolean).join(', '))}">
+<span class="tv-poster" style="background:${M.artFor(t)}">${t.poster ? `<img src="${esc(t.poster)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<span class="tv-poster-title">${esc(t.title)}</span>`}${rank ? `<span class="tv-rank" aria-hidden="true">${rank}</span>` : ''}</span>
+<span class="tv-card-title">${esc(t.title)}</span>
+<span class="tv-card-meta">${esc(tvMeta(t))}</span>
+</button>`;
+}
+
+function tvDetail(t) {
+  const score = M.effectiveScore(t);
+  const p = M.progress(t);
+  const facts = [M.KIND_LABEL[t.kind], t.year, M.hasEpisodes(t) && t.seasons.length ? `${t.seasons.length} season${t.seasons.length === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ');
+  const who = (t.makers || []).length ? `${M.MAKER_LABEL[t.makers[0].role] || "By"} ${t.makers.map((m) => m.name).join(", ")}` : "";
+  const where = (t.providers || []).map((x) => x.name).join(', ');
+  return `<section class="tv-detail" role="dialog" aria-modal="true" aria-labelledby="tvd-title" data-key="tvd-${esc(t.id)}">
+<div class="tv-detail-in">
+<span class="tv-poster tv-poster-lg" style="background:${M.artFor(t)}" aria-hidden="true">${t.poster ? `<img src="${esc(t.poster)}" alt="" referrerpolicy="no-referrer">` : `<span class="tv-poster-title">${esc(t.title)}</span>`}</span>
+<div class="tv-detail-text">
+<span class="tv-eyebrow">// ${esc(facts)}</span>
+<h2 class="tv-detail-title" id="tvd-title">${esc(t.title)}</h2>
+${t.titleQc && t.titleQc !== t.title ? `<p class="tv-detail-qc">${esc(t.titleQc)}</p>` : ''}
+<p class="tv-detail-score">${score !== null ? `<b>★ ${score.toFixed(1)}</b>` : ''}<span>${esc(M.STATUS_LABEL[t.status])}${M.hasEpisodes(t) && p.total ? ` · ${p.watched}/${p.total} episodes` : ''}</span></p>
+${t.genres.length ? `<p class="tv-detail-genres">${t.genres.map((g) => `<span>${esc(g)}</span>`).join('')}</p>` : ''}
+${who ? `<p class="tv-detail-line">${esc(who)}</p>` : ''}
+${where ? `<p class="tv-detail-line">Where to watch: ${esc(where)}</p>` : ''}
+${t.overview ? `<p class="tv-detail-overview">${esc(t.overview)}</p>` : ''}
+<button type="button" class="tv-btn" data-action="tv-close" data-tv id="tv-back">Back</button>
+</div>
+</div>
+</section>`;
+}
+
+export function tvView(state) {
+  const section = ['top', 'home', 'tonight'].includes(state.route.section) ? state.route.section : 'top';
+  const all = M.live(state.titles);
+  const tabs = [['top', 'Top'], ['home', 'Home'], ['tonight', 'Tonight']];
+  let body = '';
+  if (section === 'top') {
+    const rated = M.sortTitles(all.filter((t) => M.effectiveScore(t) !== null), 'score');
+    body = rated.length
+      ? `<h1 class="tv-h1">Your top <span>${rated.length}</span></h1><div class="tv-grid">${rated.map((t, i) => tvCard(t, i + 1)).join('')}</div>`
+      : '<p class="tv-empty">Rate a few titles to see your top here.</p>';
+  } else if (section === 'home') {
+    const rows = [
+      ['Continue', M.sortTitles(all.filter((t) => t.status === 'progress'), 'recent')],
+      ['New Seasons', all.filter((t) => t.newSeason !== null)],
+      ['Watchlist', M.sortTitles(all.filter((t) => t.status === 'watchlist'), 'recent')]
+    ].filter(([, list]) => list.length);
+    body = rows.length
+      ? rows.map(([title, list]) => `<section class="tv-row" aria-label="${title}"><h2 class="tv-h2">${title} <span>${list.length}</span></h2><div class="tv-strip">${list.map((t) => tvCard(t)).join('')}</div></section>`).join('')
+      : '<p class="tv-empty">Nothing to show yet.</p>';
+  } else {
+    const pool = all.filter((t) => t.status === 'watchlist');
+    const kinds = M.KINDS.filter((k) => pool.some((t) => t.kind === k));
+    const filter = kinds.includes(state.ui.tvKind) ? state.ui.tvKind : 'all';
+    const pick = state.ui.tvShow ? all.find((t) => t.id === state.ui.tvShow) : null;
+    const chips = [['all', 'Everything'], ...kinds.map((k) => [k, M.KIND_TAB[k]])];
+    body = !pool.length
+      ? '<h1 class="tv-h1">Tonight</h1><p class="tv-empty">Your watchlist is empty. Add a few titles to it, then come back to pick one.</p>'
+      : `<h1 class="tv-h1">Tonight</h1>
+<p class="tv-sub">Rewinder picks from your watchlist.</p>
+<div class="tv-chips" role="group" aria-label="Pick among">${chips.map(([k, label]) => `<button type="button" class="tv-chip" data-action="tv-kind" data-kind="${k}" data-tv aria-pressed="${filter === k}">${label}</button>`).join('')}</div>
+<div class="tv-pick${state.ui.tvSpin ? ' spinning' : ''}">
+${pick ? `<span class="tv-poster tv-poster-xl" style="background:${M.artFor(pick)}" aria-hidden="true">${pick.poster ? `<img src="${esc(pick.poster)}" alt="" referrerpolicy="no-referrer">` : `<span class="tv-poster-title">${esc(pick.title)}</span>`}</span>
+<div class="tv-pick-text" aria-live="polite">${state.ui.tvSpin ? '<span class="tv-eyebrow">// Picking…</span>' : `<span class="tv-eyebrow">// Tonight</span><h2 class="tv-detail-title">${esc(pick.title)}</h2><p class="tv-detail-line">${esc(tvMeta(pick))}</p>${pick.genres.length ? `<p class="tv-detail-genres">${pick.genres.map((g) => `<span>${esc(g)}</span>`).join('')}</p>` : ''}${(pick.providers || []).length ? `<p class="tv-detail-line">Where to watch: ${esc(pick.providers.map((x) => x.name).join(', '))}</p>` : ''}`}
+<div class="tv-actions"><button type="button" class="tv-btn tv-btn-main" data-action="tv-pick" data-tv${state.ui.tvSpin ? ' disabled' : ''}>${icon.dice}Pick again</button>${state.ui.tvSpin ? '' : `<button type="button" class="tv-btn" data-action="tv-open" data-id="${esc(pick.id)}" data-tv>More about it</button>`}</div>
+</div>` : `<button type="button" class="tv-btn tv-btn-main tv-btn-big" data-action="tv-pick" data-tv>${icon.dice}Pick for me</button>`}
+</div>`;
+  }
+  const detail = state.ui.tvDetail ? all.find((t) => t.id === state.ui.tvDetail) : null;
+  return `<div class="tv${detail ? ' has-detail' : ''}">
+<header class="tv-top">
+<span class="tv-brand"><img src="icons/logo-64.png" alt="" width="40" height="40"><span>REWINDER</span></span>
+<nav class="tv-tabs" aria-label="TV sections">${tabs.map(([id, label]) => `<a class="tv-tab" href="#/tv-mode/${id}" data-tv${section === id ? ' aria-current="page"' : ''}>${label}</a>`).join('')}</nav>
+<button type="button" class="tv-exit" data-action="tv-exit" data-tv>Exit TV mode</button>
+</header>
+<div class="tv-body">${body}</div>
+<p class="tv-hint" aria-hidden="true">Arrows to move · Enter to open · Back to leave</p>
+${detail ? tvDetail(detail) : ''}
+</div>`;
+}
+
+/* ---------- guides ---------- */
+
+const step = (title, text, extra = '') => `<li class="gd-step"><h3>${title}</h3><p>${text}</p>${extra}</li>`;
+
+export function guidesView(state) {
+  const tab = ['pc', 'phone', 'tv'].includes(state.ui.guideTab) ? state.ui.guideTab : 'pc';
+  const tabs = [['pc', 'Computer'], ['phone', 'Phone & tablet'], ['tv', 'TV']];
+  const panes = {
+    pc: [
+      step('Install it', 'In Chrome, Edge or Brave, click the install icon at the right end of the address bar, or open the browser menu and choose <b>Install</b>. Rewinder then opens in its own window and works without internet.', state.canInstall ? `<button type="button" class="btn btn-primary" data-action="install">${icon.install}Install now</button>` : ''),
+      step('Your keys', 'Scan needs your free TMDB key, and a RAWG key for games. The start guide walks you through it.', '<button type="button" class="btn btn-ghost" data-action="guide-open">Open the start guide</button>'),
+      step('Keep a copy', '<b>Settings → Download backup</b> saves your whole list in one file. In Chrome and Edge, Rewinder can also save a copy in a folder of yours, once a day.'),
+      step('On the TV', 'See the <b>TV</b> tab: an HDMI cable, or Chrome’s <b>Cast</b> to a Chromecast. No sign-up needed.')
+    ],
+    phone: [
+      step('Android', 'Open the link in Chrome, then <b>⋮ → Install app</b> (or <b>Add to Home screen</b>). Rewinder gets its own icon.'),
+      step('iPhone and iPad', 'Open the link in Safari, then <b>Share → Add to Home Screen</b>. Always open Rewinder from that icon: Safari can erase a website’s data after 7 days without a visit, but the home screen app keeps it.'),
+      step('Your list from the computer', 'Each device keeps its own list. On the computer: <b>Settings → Download backup</b>. Send the file to yourself (email, Discord, Drive). On the phone: <b>Settings → Restore a backup</b>. Your keys are never in a backup: paste them again in Settings.'),
+      step('Find your way', 'The bar at the bottom: <b>Home</b>, <b>All</b>, <b>Scan</b>, <b>List</b> and <b>Friends</b>. Search and Settings are at the top.')
+    ],
+    tv: [
+      step('Android phone or tablet + Chromecast or Google TV', 'In the Google Home app, pick your TV, then <b>Cast my screen</b>. Turn the phone sideways.'),
+      step('iPhone or iPad + Apple TV or an AirPlay TV', 'Open Control Center, then <b>Screen Mirroring</b> and pick your TV. Turn the device sideways.'),
+      step('Computer + Chromecast or Google TV', 'In Chrome: <b>⋮ → Cast, save and share → Cast…</b> and pick your TV. Or plug the computer into the TV with an HDMI cable.'),
+      step('Then: TV mode', 'Big posters for the couch: your <b>Top</b>, <b>Home</b> in big, and <b>Tonight</b>, which picks something from your watchlist. Arrows (or the remote) move, Enter opens, Back or Escape leaves.', `<button type="button" class="btn btn-primary" data-action="tv-enter">${icon.tv}Open TV mode</button>`)
+    ]
+  };
+  return `<div class="page page-guides">
+<div class="page-head"><div class="titles"><span class="eyebrow">// Help</span><h1 class="display display-md">Guides</h1></div></div>
+<div class="gd-tabs" role="tablist" aria-label="Guides">${tabs.map(([id, label]) => `<button type="button" role="tab" class="gd-tab" id="gd-${id}" data-action="guide-tab" data-tab="${id}" aria-selected="${tab === id}" aria-controls="gd-pane">${label}</button>`).join('')}</div>
+<section class="gd-pane" id="gd-pane" role="tabpanel" aria-labelledby="gd-${tab}">
+${tab === 'tv' ? '<p class="gd-lead">No sign-up, nothing to install on the TV: show your screen on it, then open TV mode.</p>' : ''}
+<ol class="gd-steps">${panes[tab].join('')}</ol>
 </section>
 </div>`;
 }
@@ -1091,6 +1234,7 @@ ${guideNav(state, ok ? 'Next' : 'Skip for now')}`;
 <button type="button" class="g-choice" data-action="guide-add">${icon.radar}<b>Add a title</b><small>Find it with the Scan, or add it by hand.</small></button>
 ${state.canInstall ? `<button type="button" class="g-choice" data-action="install">${icon.install}<b>Install Rewinder</b><small>Open it like any app, from the Start menu.</small></button>` : ''}
 <button type="button" class="g-choice" data-action="guide-restore">${icon.upload}<b>Restore a backup</b><small>Moving from another computer?</small></button>
+<button type="button" class="g-choice" data-action="guide-to" data-to="#/guides">${icon.book}<b>Phone, tablet, TV</b><small>How to get Rewinder there</small></button>
 </div>
 <p class="set-text dim">Your list stays on this computer. Settings → Backup keeps a copy safe.</p>
 <div class="guide-nav"><button type="button" class="btn btn-ghost" data-action="guide-back">Back</button><button type="button" class="btn btn-primary" id="guide-next" data-action="guide-to" data-to="#/">Go to Home</button></div>`;

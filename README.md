@@ -13,6 +13,24 @@ Des notes sur 10 (les étoiles se remplissent au dixième), des commentaires, le
 
 À la première ouverture, un **guide de démarrage** t'amène en 4 étapes : ta couleur, ta clé TMDB, ta clé RAWG, pis par où commencer. Chaque étape se saute. Pour le revoir : **Settings → App → Open the start guide**.
 
+Les **Guides** (en bas de chaque page, ou dans Settings) expliquent tout ça pour l'ordi, le téléphone et la tablette, pis la TV.
+
+## Sur téléphone et tablette
+
+- Android : ouvre le lien dans Chrome, puis **⋮ → Install app** (ou *Add to Home screen*).
+- iPhone et iPad : ouvre le lien dans Safari, puis **Partager → Sur l'écran d'accueil**. Ouvre toujours Rewinder par cette icône : Safari peut effacer les données d'un site après 7 jours sans visite, l'app de l'écran d'accueil les garde.
+- Chaque appareil garde sa propre liste. Pour amener la tienne : **Download backup** sur l'ordi, envoie-toi le fichier, pis **Restore a backup** sur le téléphone.
+- La barre du bas : **Home**, **All**, **Scan**, **List** et **Friends**. La recherche et les Settings sont en haut.
+
+## Sur la TV
+
+Rien à installer sur la TV, pas d'inscription : tu montres ton écran dessus, pis tu ouvres le **TV mode**.
+
+- Android + Chromecast ou Google TV : app Google Home → ta TV → **Cast my screen**. Tourne le téléphone de côté.
+- iPhone ou iPad + Apple TV ou TV AirPlay : Centre de contrôle → **Recopie de l'écran**.
+- Ordi : dans Chrome, **⋮ → Cast, save and share → Cast…**, ou un câble HDMI.
+- **TV mode** (en bas de page ou dans Settings) : plein écran, grosses affiches. Ton **Top**, l'accueil en grand (**Home**), pis **Tonight** qui pige un titre dans ta watchlist. Les flèches (ou la télécommande) se promènent, Enter ouvre, Back ou Escape revient.
+
 ## Tes données
 
 - Ta liste reste dans ton navigateur, sur ton ordi. Rien n'est envoyé ailleurs.
