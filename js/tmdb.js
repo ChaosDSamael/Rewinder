@@ -120,6 +120,28 @@ export async function search(query, key, signal) {
     });
 }
 
+// For the list import: search only movies, or only shows, with the year when the line has one.
+export async function searchKind(query, kind, year, key, signal) {
+  const movie = kind === 'movie';
+  const params = { query, include_adult: 'false', language: 'en-US', page: '1' };
+  if (year) params[movie ? 'year' : 'first_air_date_year'] = String(year);
+  const data = await get(movie ? '/search/movie' : '/search/tv', params, key, signal);
+  const type = movie ? 'movie' : 'tv';
+  return (data.results || []).filter(Boolean).slice(0, 8).map((r) => {
+    const title = mainTitle(r, type);
+    const original = String((movie ? r.original_title : r.original_name) || '').trim();
+    return {
+      type,
+      id: r.id,
+      kind: kindOf(type, r.genre_ids, r.original_language, r.origin_country),
+      title,
+      original: original && original !== title ? original : '',
+      year: yearOf(movie ? r.release_date : r.first_air_date),
+      poster: image(r.poster_path, 'w154')
+    };
+  });
+}
+
 // Everything about one title. Seasons come 20 at a time, the most TMDB allows per request.
 export async function fetchTitle(type, id, key, onStep) {
   if (type === 'movie') {

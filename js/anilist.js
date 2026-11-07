@@ -14,19 +14,40 @@ const QUERY = `query ($search: String) {
 const SERIES = ['TV', 'TV_SHORT', 'ONA', 'OVA'];
 
 // Tries the Japanese title first, then the English one; the start year must match within a year.
+// AniList allows about 90 requests a minute: requests wait their turn, a bit apart.
+let nextSlot = 0;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function turn() {
+  const now = Date.now();
+  const at = Math.max(now, nextSlot);
+  nextSlot = at + 750;
+  if (at > now) await sleep(at - now);
+}
+
+async function ask(search) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await turn();
+    const res = await fetch(API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ query: QUERY, variables: { search } })
+    });
+    if (res.status !== 429) return res;
+    const wait = Math.min(65, Number(res.headers.get('Retry-After')) || 30);
+    nextSlot = Date.now() + wait * 1000;
+  }
+  return null;
+}
+
 export async function animeGenres(titles, year) {
   for (const search of titles.filter(Boolean)) {
     let res;
     try {
-      res = await fetch(API, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ query: QUERY, variables: { search } })
-      });
+      res = await ask(search);
     } catch {
       return null;
     }
-    if (!res.ok) return null;
+    if (!res || !res.ok) return null;
     let data;
     try {
       data = await res.json();

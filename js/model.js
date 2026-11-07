@@ -1,6 +1,6 @@
 // Rewinder — data helpers. Pure functions: no DOM, no storage.
 
-export const APP_VERSION = '1.2.0';
+export const APP_VERSION = '1.3.0';
 
 export const KINDS = ['movie', 'tv', 'anime', 'game'];
 export const KIND_LABEL = { movie: 'Movie', tv: 'TV Show', anime: 'Anime', game: 'Game' };
@@ -98,6 +98,8 @@ export function progress(t) {
 export const nextEpisode = (t) => episodes(t).find((x) => !x.ep.watched) || null;
 
 // An episode is out once its air date has passed. A scanned episode with no date yet is not.
+export const shownDate = (v, withYear) => (v === 'unknown' ? 'date unknown' : fmtDate(v, withYear));
+
 export const isAired = (e) => !e.tba && (!e.aired || e.aired <= today());
 
 export function airLabel(e) {
@@ -180,7 +182,9 @@ export function makeSeason(n, count) {
 const isImage = (v) => typeof v === 'string' && /^https:\/\/(image\.tmdb\.org|media\.rawg\.io)\/[\w./%-]+$/.test(v);
 const strList = (v, max = 50) => (Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean).slice(0, max) : []);
 const dayOrNull = (v) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
-const markDate = (v) => (typeof v === 'string' ? dayOrNull(v) : v ? today() : null);
+// 'unknown': you saw it (an imported list says so) but the date is lost.
+const seenDate = (v) => (v === 'unknown' ? 'unknown' : dayOrNull(v));
+const markDate = (v) => (typeof v === 'string' ? seenDate(v) : v ? today() : null);
 
 // Makes any stored or imported object safe to use: right types, known values, no surprises.
 export function normalizeTitle(raw) {
@@ -204,7 +208,7 @@ export function normalizeTitle(raw) {
     notes: String(r.notes || '').slice(0, 10000),
     tags: strList(r.tags, 30),
     via: String(r.via || '').slice(0, 60),
-    views: Array.isArray(r.views) ? r.views.map((v) => dayOrNull(v && v.date)).filter(Boolean).map((date) => ({ date })) : [],
+    views: Array.isArray(r.views) ? r.views.map((v) => seenDate(v && v.date)).filter(Boolean).map((date) => ({ date })) : [],
     platforms: strList(r.platforms, 12),
     game: { story: markDate(r.game && r.game.story), full: markDate(r.game && r.game.full) },
     seasons: Array.isArray(r.seasons) ? r.seasons.map((s, i) => ({
@@ -217,7 +221,7 @@ export function normalizeTitle(raw) {
         title: String((e && e.title) || '').slice(0, 300),
         aired: dayOrNull(e && e.aired) || '',
         tba: Boolean(e && e.tba),
-        watched: dayOrNull(e && e.watched),
+        watched: seenDate(e && e.watched),
         score: e && typeof e.score === 'number' ? clampScore(e.score) : null,
         note: String((e && e.note) || '').slice(0, 10000)
       })) : []

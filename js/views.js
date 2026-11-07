@@ -1,5 +1,6 @@
 // Rewinder — screens. Each function returns HTML; every piece of user text goes through esc().
 import * as M from './model.js';
+import * as L from './importer.js';
 import { esc, icon, rater, miniStars, corners, visor, poster, statusDot } from './ui.js';
 
 const tHref = (t) => `#/title/${encodeURIComponent(t.id)}`;
@@ -101,9 +102,21 @@ function heroNav(t, heroes) {
   const prev = heroes[(at - 1 + heroes.length) % heroes.length];
   const next = heroes[(at + 1) % heroes.length];
   return `<div class="hero-nav" role="group" aria-label="Series in progress">
-<button type="button" class="icon-btn hero-arrow" id="hero-prev" data-action="hero-go" data-id="${esc(prev.id)}" aria-label="Previous: ${esc(prev.title)}" title="${esc(prev.title)}">${icon.chevLeft}</button>
+<button type="button" class="icon-btn hero-arrow" id="hero-prev" data-action="hero-go" data-dir="prev" data-id="${esc(prev.id)}" aria-label="Previous: ${esc(prev.title)}" title="${esc(prev.title)}">${icon.chevLeft}</button>
 <span class="hero-count" aria-live="polite">${M.pad2(at + 1)} / ${M.pad2(heroes.length)}</span>
-<button type="button" class="icon-btn hero-arrow" id="hero-next" data-action="hero-go" data-id="${esc(next.id)}" aria-label="Next: ${esc(next.title)}" title="${esc(next.title)}">${icon.chevRight}</button>
+<button type="button" class="icon-btn hero-arrow" id="hero-next" data-action="hero-go" data-dir="next" data-id="${esc(next.id)}" aria-label="Next: ${esc(next.title)}" title="${esc(next.title)}">${icon.chevRight}</button>
+</div>`;
+}
+
+function sideArrow(dir, t) {
+  return `<button type="button" class="hero-side hero-side-${dir}" id="hero-side-${dir}" data-action="hero-go" data-dir="${dir}" data-id="${esc(t.id)}" aria-label="${dir === 'prev' ? 'Previous' : 'Next'}: ${esc(t.title)}" title="${esc(t.title)}">${dir === 'prev' ? icon.sideLeft : icon.sideRight}</button>`;
+}
+
+function heroBlock(t, state, heroes) {
+  const n = heroes.length;
+  const at = heroes.indexOf(t);
+  return `<div class="hero-wrap" data-key="hero-wrap">
+${n > 1 ? sideArrow('prev', heroes[(at - 1 + n) % n]) : ''}${heroContinue(t, state, heroes)}${n > 1 ? sideArrow('next', heroes[(at + 1) % n]) : ''}
 </div>`;
 }
 
@@ -114,7 +127,8 @@ function heroContinue(t, state, heroes = [t]) {
   const code = M.epCode(nx.season.n, nx.ep.n);
   const pending = state.ui.homeScore[t.id];
   const meta = [t.year, ...t.genres.slice(0, 2), t.seasons.length ? plural(t.seasons.length, 'season') : ''].filter(Boolean).join(' · ');
-  return `<section class="hero" data-key="hero-${esc(t.id)}" aria-labelledby="hero-title" style="--art:${M.heroArt(t)}">
+  const slide = state.ui.heroDir ? ` slide-${state.ui.heroDir}` : '';
+  return `<section class="hero${slide}" data-key="hero-${esc(t.id)}" aria-labelledby="hero-title" style="--art:${M.heroArt(t)}">
 ${t.backdrop ? `<img class="hero-img" src="${esc(t.backdrop)}" alt="" referrerpolicy="no-referrer">` : ''}<div class="hero-shade" aria-hidden="true"></div><div class="scanlines" aria-hidden="true"></div>${visor}${corners}
 <div class="hero-body">
 <div class="eyebrow-row"><span class="eyebrow">// Continue</span><span class="pill">${M.KIND_LABEL[t.kind]}</span></div>
@@ -138,7 +152,7 @@ function heroWelcome() {
 <span class="eyebrow">// Welcome</span>
 <h1 class="display" id="hero-title">Start your list</h1>
 <p class="lead">Movies, TV shows, anime and games. Rate them, track every episode, and never forget what you watched.</p>
-<div class="actions"><button type="button" class="btn btn-primary" data-action="add">${icon.plus}Add a title</button><button type="button" class="btn btn-ghost" data-action="import">${icon.upload}Restore a backup</button></div>
+<div class="actions"><button type="button" class="btn btn-primary" data-action="add">${icon.plus}Add a title</button><a class="btn btn-ghost" href="#/import">${icon.rows}Import a list</a><button type="button" class="btn btn-ghost" data-action="import">${icon.upload}Restore a backup</button></div>
 </div>
 </section>`;
 }
@@ -185,7 +199,7 @@ export function homeView(state) {
   ];
   for (const g of M.topGenres(all)) rows.push({ id: 'g-' + g.toLowerCase().replace(/[^a-z0-9]+/g, '-'), title: g, items: all.filter((t) => t.genres.includes(g)).sort(byActivity), see: { q: g } });
   return `<div class="page page-home">
-${hero ? heroContinue(hero, state, heroes) : all.length ? '' : heroWelcome()}
+${hero ? heroBlock(hero, state, heroes) : all.length ? '' : heroWelcome()}
 ${rows.filter((r) => r.items.length).map(rowSection).join('')}
 </div>`;
 }
@@ -267,7 +281,7 @@ function episodeDetails(s, e) {
 <div class="ep-fields">
 <label class="field"><span class="label">Title</span><input id="ep-title-${id}" class="input input-sm" data-ep-field="title" data-ep="${k}" value="${esc(e.title)}" placeholder="Episode ${e.n}" maxlength="300" autocomplete="off"></label>
 <label class="field"><span class="label">Aired</span><input id="ep-aired-${id}" type="date" class="input input-sm" data-ep-field="aired" data-ep="${k}" value="${esc(e.aired)}"></label>
-${e.watched ? `<label class="field"><span class="label">Watched on</span><input id="ep-watched-${id}" type="date" class="input input-sm" data-ep-field="watched" data-ep="${k}" value="${esc(e.watched)}" required></label>` : ''}
+${e.watched ? `<label class="field"><span class="label">Watched on</span><input id="ep-watched-${id}" type="date" class="input input-sm" data-ep-field="watched" data-ep="${k}" value="${e.watched === 'unknown' ? '' : esc(e.watched)}" required></label>` : ''}
 </div>
 <label class="field"><span class="label">Note</span><textarea id="note-ep-${id}" class="textarea note-field" rows="2" data-ep-note="${k}" placeholder="What did you think of this one?">${esc(e.note)}</textarea></label>
 <div class="ep-foot"><button type="button" class="btn btn-ghost btn-sm btn-danger" data-action="ep-remove" data-ep="${k}">${icon.trash}Remove episode</button></div>
@@ -361,7 +375,7 @@ function gameSection(t) {
   const plats = [...new Set([...(t.available.length ? t.available : M.GAME_PLATFORMS), ...t.platforms])];
   const mark = (key, label) => {
     const on = t.game[key];
-    return `<button type="button" class="mark${on ? ' on' : ''}" data-action="game-mark" data-mark="${key}" aria-pressed="${Boolean(on)}">${icon.check}<span class="mark-text"><b>${label}</b><small>${on ? 'Done ' + esc(M.fmtDate(on, true)) : 'Not yet'}</small></span></button>`;
+    return `<button type="button" class="mark${on ? ' on' : ''}" data-action="game-mark" data-mark="${key}" aria-pressed="${Boolean(on)}">${icon.check}<span class="mark-text"><b>${label}</b><small>${on ? (on === 'unknown' ? 'Done' : 'Done ' + esc(M.fmtDate(on, true))) : 'Not yet'}</small></span></button>`;
   };
   return `<section class="sec" aria-labelledby="h-progress">
 <div class="sec-head"><h2 class="h2" id="h-progress"><span class="sq" aria-hidden="true"></span>Progress</h2></div>
@@ -414,12 +428,12 @@ function viaPanel(t, state) {
 
 function viewsPanel(t) {
   const n = t.views.length;
-  const firstEp = M.hasEpisodes(t) ? M.episodes(t).map((x) => x.ep.watched).filter(Boolean).sort()[0] : null;
-  const sub = n ? `Last ${M.fmtDate(t.views[n - 1].date, true)}` : firstEp ? `Started ${M.fmtDate(firstEp, true)}` : 'Not seen yet';
+  const firstEp = M.hasEpisodes(t) ? M.episodes(t).map((x) => x.ep.watched).filter((d) => /^\d/.test(d || '')).sort()[0] : null;
+  const sub = n ? `Last ${M.shownDate(t.views[n - 1].date, true)}` : firstEp ? `Started ${M.fmtDate(firstEp, true)}` : 'Not seen yet';
   return `<section class="panel" aria-labelledby="h-views">
 <h2 class="panel-title" id="h-views">Watch count</h2>
 <div class="count-row"><span class="big-count">×${n}</span><span class="panel-sub">${esc(sub)}</span></div>
-${n ? `<ol class="views">${t.views.map((v, i) => `<li><span>${esc(M.fmtDate(v.date, true))}</span><button type="button" class="x-btn" data-action="view-remove" data-i="${i}" aria-label="Remove the viewing of ${esc(M.fmtDate(v.date, true))}">${icon.x}</button></li>`).join('')}</ol>` : ''}
+${n ? `<ol class="views">${t.views.map((v, i) => `<li><span>${esc(M.shownDate(v.date, true))}</span><button type="button" class="x-btn" data-action="view-remove" data-i="${i}" aria-label="Remove the viewing of ${esc(M.shownDate(v.date, true))}">${icon.x}</button></li>`).join('')}</ol>` : ''}
 <button type="button" class="btn btn-ghost btn-sm" data-action="view-add">${icon.plus}${n ? 'Seen again' : 'Seen it'}</button>
 </section>`;
 }
@@ -535,7 +549,7 @@ ${keyField('rawgKey', 'RAWG key', 'API key', 'https://rawg.io/apidocs', s.rawgKe
 <section class="set-sec" aria-labelledby="set-backup"><h2 class="h2" id="set-backup"><span class="sq" aria-hidden="true"></span>Backup</h2>
 <p class="set-text">Your list lives only in this browser. Download a backup now and then, and keep it somewhere safe, like a cloud folder. A backup also moves your list to another computer.</p>
 ${needsBackup(state) ? `<p class="reminder">${icon.download}<span>${s.lastBackupAt ? `Last backup ${esc(M.fmtDate(s.lastBackupAt, true))} · ${plural(s.changesSinceBackup || 0, 'change')} since.` : 'No backup yet.'} Time for one.</span><button type="button" class="link-btn" data-action="backup-later">Later</button></p>` : `<p class="panel-sub">${s.lastBackupAt ? `Last backup ${esc(M.fmtDate(s.lastBackupAt, true))} · ${plural(s.changesSinceBackup || 0, 'change')} since` : 'No backup yet'}</p>`}
-<div class="actions"><button type="button" class="btn btn-primary" data-action="export">${icon.download}Download backup</button><button type="button" class="btn btn-ghost" data-action="import">${icon.upload}Restore a backup</button></div>
+<div class="actions"><button type="button" class="btn btn-primary" data-action="export">${icon.download}Download backup</button><button type="button" class="btn btn-ghost" data-action="import">${icon.upload}Restore a backup</button><a class="btn btn-ghost" href="#/import">${icon.rows}Import a list</a></div>
 </section>
 
 <section class="set-sec" aria-labelledby="set-trash"><h2 class="h2" id="set-trash"><span class="sq" aria-hidden="true"></span>Trash<span class="count">${trashed.length}</span></h2>
@@ -652,5 +666,124 @@ ${link ? '' : `<label class="sr" for="scan-status">Status</label><select id="sca
 </form>
 <div class="scan-results" id="scan-results" aria-live="polite">${scanResults(scan, titles)}</div>
 <div class="dlg-actions scan-foot"><span class="scan-credit">Search by ${scan.sources.map((x) => x === 'tmdb' ? '<a href="https://www.themoviedb.org" target="_blank" rel="noopener">TMDB</a>' : '<a href="https://rawg.io" target="_blank" rel="noopener">RAWG</a>').join(' · ')}</span><span class="actions">${link ? '' : '<button type="button" class="btn btn-dashed" data-action="scan-manual">Add it by hand</button>'}<button type="button" class="btn btn-ghost" data-action="dlg-close">Close</button></span></div>
+</div>`;
+}
+
+/* ---------- import a list ---------- */
+
+const IMPORT_HINT = `Shonen:
+One Piece : 9.8/10
+Frieren : S1 9.2/10 — S2
+Death Note`;
+
+function importPaste(state) {
+  const imp = state.imp;
+  const needKey = imp.kind && !(imp.kind === 'game' ? state.settings.rawgKey : state.settings.tmdbKey);
+  return `<section class="set-sec imp-paste" aria-labelledby="imp-h">
+<h2 class="sr" id="imp-h">Paste your list</h2>
+<div class="field"><span class="label" id="imp-kind-lbl">What's in this list?</span>
+<div class="chips" role="group" aria-labelledby="imp-kind-lbl">${M.KINDS.map((k) => `<button type="button" class="chip" data-action="imp-kind" data-kind="${k}" aria-pressed="${imp.kind === k}">${M.KIND_TAB[k]}</button>`).join('')}</div></div>
+<div class="field"><label class="label" for="imp-text">Your list</label>
+<textarea id="imp-text" class="textarea imp-text" rows="14" spellcheck="false" placeholder="${esc(IMPORT_HINT)}">${esc(imp.text)}</textarea></div>
+<p class="set-text dim">One title per line. Scores like 8.5 or 8.5/10, seasons like S1 7.9 — S2 7.7. A line alone above a group is the group's name. Nothing is added before you check.</p>
+${needKey ? `<p class="scan-note">No ${imp.kind === 'game' ? 'RAWG' : 'TMDB'} key in Settings: the titles will come in by hand, without posters or episodes.</p>` : ''}
+<div class="actions imp-actions">
+<button type="button" class="btn btn-ghost" data-action="imp-file">${icon.upload}Open a .txt file</button>
+<label class="switch"><input type="checkbox" id="imp-tags" data-imp="useTags"${imp.useTags ? ' checked' : ''}><span class="switch-ui" aria-hidden="true"></span>Group names become tags</label>
+<button type="button" class="btn btn-primary" data-action="imp-read"${imp.kind && imp.text.trim() ? '' : ' disabled'}>Read the list</button>
+</div>
+</section>`;
+}
+
+function importMatchCell(it, state) {
+  const existing = it.existingId ? state.titles.find((t) => t.id === it.existingId) : null;
+  if (existing) return `<span class="imp-thumb" style="background:${M.artFor(existing)}">${existing.poster ? `<img src="${esc(existing.poster)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}</span><span class="imp-m"><span class="imp-m-title">${esc(existing.title)}</span><span class="imp-m-sub">In your list · scores and tags get added</span></span>`;
+  if (!it.searched && !state.imp.noKey) return '<span class="imp-m-sub imp-wait">Searching…</span>';
+  if (it.quality === 'error') return `<span class="tag-warn">Error</span><span class="imp-m-sub">${esc(it.error || 'Search failed')} · added by hand</span>`;
+  if (!it.match) return `${state.imp.noKey ? '' : '<span class="tag-warn">Not found</span>'}<span class="imp-m-sub">Added by hand</span>`;
+  const r = it.match;
+  const listKind = state.imp.kind;
+  // Only say the kind when it differs from the list's (a show in the movie list, a movie in the anime list).
+  const odd = (listKind === 'movie' && r.type === 'tv') || ((listKind === 'tv' || listKind === 'anime') && r.type === 'movie');
+  const sub = [odd ? M.KIND_LABEL[r.kind] : '', r.year, r.original].filter(Boolean).join(' · ');
+  return `<span class="imp-thumb" style="background:${M.artFor({ title: r.title })}">${r.poster ? `<img src="${esc(r.poster)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}</span><span class="imp-m"><span class="imp-m-title">${esc(r.title)}</span><span class="imp-m-sub">${esc(sub)}</span></span>${it.quality === 'check' ? '<span class="tag-warn">Check</span>' : ''}`;
+}
+
+function importChange(it, state) {
+  const imp = state.imp;
+  const list = imp.changeResults || it.candidates || [];
+  return `<div class="imp-change">
+<div class="search">${icon.search}<label class="sr" for="imp-q">Search for ${esc(it.title)}</label><input id="imp-q" type="search" value="${esc(imp.changeQuery)}" data-imp-q="${it.id}" autocomplete="off" spellcheck="false"></div>
+${imp.changeLoading ? '<p class="scan-hint">Searching…</p>' : list.length ? `<ul class="scan-list">${list.map((r) => `<li><button type="button" class="scan-item" data-action="imp-pick" data-id="${it.id}" data-type="${r.type}" data-rid="${r.id}"><span class="scan-thumb" style="background:${M.artFor({ title: r.title })}" aria-hidden="true">${r.poster ? `<img src="${esc(r.poster)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}</span><span class="scan-info"><span class="scan-title">${esc(r.title)}</span><span class="scan-sub">${esc([M.KIND_LABEL[r.kind], r.year, r.original].filter(Boolean).join(' · '))}</span></span></button></li>`).join('')}</ul>` : '<p class="scan-hint">Nothing found. Try another spelling.</p>'}
+<div class="actions"><button type="button" class="btn btn-ghost btn-sm" data-action="imp-nomatch" data-id="${it.id}">No match: add it by hand</button><button type="button" class="btn btn-ghost btn-sm" data-action="imp-change" data-id="${it.id}">Done</button></div>
+</div>`;
+}
+
+function importRow(it, state) {
+  const imp = state.imp;
+  if (it.heading) {
+    return `<li class="imp-group" data-key="ig-${it.id}"><span class="imp-group-name">// ${esc(it.title)}</span><button type="button" class="link-btn" data-action="imp-heading" data-id="${it.id}">It's a title</button></li>`;
+  }
+  const rated = it.score !== null || it.seasons.length > 0;
+  const tags = L.tagsFor(it, imp.useTags);
+  const warn = !it.existingId && it.searched && (it.quality === 'check' || !it.match) && !imp.noKey;
+  return `<li class="imp-row${it.include ? '' : ' off'}${warn ? ' warn' : ''}" data-key="ir-${it.id}">
+<input type="checkbox" id="imp-in-${it.id}" data-imp-include="${it.id}"${it.include ? ' checked' : ''} aria-label="Import ${esc(it.title)}">
+<span class="imp-line"><span class="imp-title">${esc(it.title)}</span><span class="imp-score">${esc(L.scoreSummary(it) || 'no score')}</span></span>
+<span class="imp-match">${importMatchCell(it, state)}</span>
+<span class="imp-status"><label class="sr" for="imp-st-${it.id}">Status for ${esc(it.title)}</label><select id="imp-st-${it.id}" class="select select-sm" data-imp-status="${it.id}"${it.existingId ? ' disabled title="Your status stays"' : ''}>${M.STATUSES.map((s) => `<option value="${s}"${s === it.status ? ' selected' : ''}>${M.STATUS_LABEL[s]}</option>`).join('')}</select></span>
+<span class="imp-tags">${tags.map((x) => `<span>#${esc(x)}</span>`).join('')}</span>
+<span class="imp-tools">${it.existingId || imp.noKey ? '' : `<button type="button" class="btn btn-ghost btn-sm" data-action="imp-change" data-id="${it.id}">Change</button>`}${rated ? '' : `<button type="button" class="link-btn" data-action="imp-heading" data-id="${it.id}" title="This line is a group name">Group</button>`}</span>
+${imp.changeId === it.id ? importChange(it, state) : ''}
+</li>`;
+}
+
+function importReview(state) {
+  const imp = state.imp;
+  const titles = imp.items.filter((it) => !it.heading);
+  const groups = imp.items.length - titles.length;
+  const chosen = titles.filter((it) => it.include);
+  const toCheck = titles.filter((it) => it.include && !it.existingId && it.searched && (it.quality === 'check' || !it.match)).length;
+  const inList = titles.filter((it) => it.include && it.existingId).length;
+  const searched = titles.filter((it) => it.searched).length;
+  const status = imp.matching
+    ? `Matching with ${imp.kind === 'game' ? 'RAWG' : 'TMDB'}… ${searched} of ${titles.length}`
+    : [plural(titles.length, 'title'), groups ? plural(groups, 'group') : '', toCheck ? `${toCheck} to check` : '', inList ? `${inList} already in your list` : ''].filter(Boolean).join(' · ');
+  return `<div class="imp-bar"><span class="imp-summary">${esc(status)}</span><span class="actions"><button type="button" class="btn btn-ghost" data-action="imp-back">Back</button><button type="button" class="btn btn-primary" data-action="imp-run"${imp.matching || !chosen.length ? ' disabled' : ''}>Import ${chosen.length}</button></span></div>
+${toCheck ? '<p class="set-text dim">The lines marked Check or Not found: open Change to pick the right one, or leave them as they are.</p>' : ''}
+<ol class="imp-list">${imp.items.map((it) => importRow(it, state)).join('')}</ol>`;
+}
+
+function importRunning(state) {
+  const imp = state.imp;
+  const pct = imp.total ? Math.round((imp.done / imp.total) * 100) : 0;
+  return `<section class="set-sec imp-run" aria-live="polite">
+<span class="eyebrow">// Importing</span>
+<p class="imp-count">${imp.done} / ${imp.total}</p>
+<span class="bar-lg" aria-hidden="true"><span style="width:${pct}%"></span></span>
+<p class="panel-sub">${esc(imp.current ? `Now: ${imp.current}` : '')}</p>
+<p class="set-text dim">Keep Rewinder open. Anime genres come from AniList a few at a time, so a long list takes a minute or two.</p>
+</section>`;
+}
+
+function importDone(state) {
+  const r = state.imp.results || { added: 0, updated: 0, manual: 0, failed: [] };
+  const parts = [r.added ? `${r.added} added with the Scan` : '', r.manual ? `${r.manual} added by hand` : '', r.updated ? `${r.updated} updated` : ''].filter(Boolean);
+  return `<section class="set-sec imp-run">
+<span class="eyebrow">// Done</span>
+<p class="imp-count">${r.added + r.manual + r.updated}</p>
+<p class="set-text">${esc(parts.join(' · ') || 'Nothing imported.')}</p>
+${r.failed.length ? `<p class="dlg-error">Could not import: ${esc(r.failed.join(', '))}. Try them again with Scan.</p>` : ''}
+<div class="actions"><a class="btn btn-primary" href="#/list">See the Full List</a><button type="button" class="btn btn-ghost" data-action="imp-again">Import another list</button></div>
+</section>`;
+}
+
+export function importView(state) {
+  const imp = state.imp;
+  const body = imp.step === 'review' ? importReview(state) : imp.step === 'running' ? importRunning(state) : imp.step === 'done' ? importDone(state) : importPaste(state);
+  const sub = imp.step === 'review' && imp.kind ? `// Review · ${M.KIND_TAB[imp.kind]}` : '// Bring your list';
+  return `<div class="page page-import">
+<div class="page-head"><div class="titles"><span class="eyebrow">${esc(sub)}</span><h1 class="display display-md">Import</h1></div></div>
+${body}
 </div>`;
 }

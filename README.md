@@ -25,6 +25,16 @@ Des notes sur 10 (les étoiles se remplissent au dixième), des commentaires, le
 - Sur une fiche faite à la main, **Scan** la relie à TMDB ou RAWG. Ensuite, **Rescan** la met à jour. Tes notes, tes épisodes cochés et tes commentaires restent.
 - Sans clé, tout marche à la main.
 
+## Importer une liste
+
+**Settings → Import a list** (ou le bouton sur l'écran d'accueil). Tu choisis ce qu'il y a dans la liste (films, séries, animes, jeux), tu colles ton texte ou tu ouvres un fichier .txt, pis Rewinder te montre tout avant d'ajouter quoi que ce soit.
+
+- Une ligne par titre. Notes comme `8.5` ou `8.5/10`, par saison comme `S1 7.9/10 — S2 7.7/10`, ou `S1-2-3-4 9.2/10`.
+- Une ligne seule au-dessus d'un groupe (`Shonen:`) devient un tag sur chaque titre du groupe (optionnel).
+- `(FM)` ou `(FromMemory)` donne le tag « from memory »; `To note` donne « to rate ».
+- Un titre sans note va dans la Watchlist. Une saison nommée sans note (`— S3`) = pas encore vue : la série passe In Progress.
+- Ce que tu as vu est coché avec la date « inconnue ». Un titre déjà dans ta liste garde tes affaires : seulement ses notes vides et ses tags sont ajoutés.
+
 ## Crédits
 
 - This product uses the TMDB API but is not endorsed or certified by TMDB.

@@ -1,5 +1,5 @@
 // Rewinder — offline support. Bump VERSION on every release so browsers pick up the new files.
-const VERSION = 'rewinder-1.2.0';
+const VERSION = 'rewinder-1.3.0';
 const SHELL = [
   './',
   './index.html',
@@ -14,6 +14,7 @@ const SHELL = [
   './js/tmdb.js',
   './js/rawg.js',
   './js/anilist.js',
+  './js/importer.js',
   './icons/logo-64.png',
   './icons/favicon-32.png',
   './icons/icon-192.png',

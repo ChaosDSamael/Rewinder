@@ -5,6 +5,7 @@ import * as V from './views.js';
 import * as tmdb from './tmdb.js';
 import * as rawg from './rawg.js';
 import { animeGenres } from './anilist.js';
+import * as L from './importer.js';
 import { esc } from './ui.js';
 import { morphChildren } from './morph.js';
 
@@ -35,9 +36,14 @@ const state = {
     homeScore: {},
     focusAfter: null,
     rescanning: null,
-    heroId: null
-  }
+    heroId: null,
+    heroDir: null
+  },
+  imp: null
 };
+
+const importDefaults = (kind = '') => ({ step: 'paste', kind, text: '', useTags: true, items: [], matching: false, noKey: false, done: 0, total: 0, current: '', results: null, changeId: null, changeQuery: '', changeResults: null, changeLoading: false });
+state.imp = importDefaults();
 
 const byId = (id) => state.titles.find((t) => t.id === id) || null;
 const cur = () => state.current;
@@ -57,6 +63,7 @@ function view() {
   if (r.name === 'browse') return V.browseView(state, r.kind);
   if (r.name === 'title') return state.current ? V.titleView(state, state.current) : V.notFoundView();
   if (r.name === 'settings') return V.settingsView(state);
+  if (r.name === 'import') return V.importView(state);
   return V.notFoundView();
 }
 
@@ -126,6 +133,7 @@ function parseRoute() {
   if (M.PATH_KIND[parts[0]]) return { name: 'browse', kind: M.PATH_KIND[parts[0]] };
   if (parts[0] === 'title' && parts[1]) return { name: 'title', id: parts[1] };
   if (parts[0] === 'settings') return { name: 'settings' };
+  if (parts[0] === 'import') return { name: 'import' };
   return { name: 'notfound' };
 }
 
@@ -147,6 +155,7 @@ function onRoute() {
   const r = state.route;
   const sameTitle = prev.name === 'title' && r.name === 'title' && prev.id === r.id;
   if (dlg.open) closeDialog();
+  state.ui.heroDir = null;
   if (!sameTitle) {
     state.ui.openEp = null;
     state.ui.addSeasonOpen = false;
@@ -164,7 +173,7 @@ function onRoute() {
   document.title = r.name === 'title' && t ? `${t.title} · Rewinder`
     : r.name === 'list' ? 'Full List · Rewinder'
       : r.name === 'browse' ? `${M.KIND_TAB[r.kind]} · Rewinder`
-        : r.name === 'settings' ? 'Settings · Rewinder' : 'Rewinder';
+        : r.name === 'settings' ? 'Settings · Rewinder' : r.name === 'import' ? 'Import · Rewinder' : 'Rewinder';
   if (t) loadHistory(t.id);
 }
 
@@ -598,7 +607,7 @@ async function removeView(index) {
   if (!t || !t.views[index]) return;
   const [gone] = t.views.splice(index, 1);
   render();
-  await commit(t, `Removed the viewing of ${M.fmtDate(gone.date, true)}`);
+  await commit(t, `Removed the viewing of ${M.shownDate(gone.date, true)}`);
 }
 
 async function trashTitle() {
@@ -1168,6 +1177,261 @@ async function rescan() {
   }
 }
 
+/* ---------- import a list ---------- */
+
+let matchToken = 0;
+const impItem = (id) => state.imp.items.find((it) => it.id === id) || null;
+const impKey = () => (state.imp.kind === 'game' ? state.settings.rawgKey : state.settings.tmdbKey);
+
+function openListFile() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.txt,text/plain';
+  input.addEventListener('change', async () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    if (file.size > 2e6) { toast('That file is too big for a list.'); return; }
+    state.imp.text = await file.text();
+    if (!state.imp.kind) {
+      const name = file.name.toLowerCase();
+      state.imp.kind = /anim/.test(name) ? 'anime' : /movie|film/.test(name) ? 'movie' : /game|jeu/.test(name) ? 'game' : /show|serie|série|tv/.test(name) ? 'tv' : '';
+    }
+    render();
+  });
+  input.click();
+}
+
+function findExisting(it) {
+  const live = M.live(state.titles);
+  const m = it.match;
+  if (m) {
+    const hit = live.find((t) => (m.type === 'game' ? t.rawgId === m.id : t.tmdbId === m.id && t.tmdbType === m.type));
+    if (hit) return hit;
+  }
+  const k = L.keyOf(it.title);
+  const kind = state.imp.kind;
+  const sameShelf = (t) => t.kind === kind || (M.hasEpisodes(t) && (kind === 'tv' || kind === 'anime'));
+  return live.find((t) => sameShelf(t) && (L.keyOf(t.title) === k || (t.titleQc && L.keyOf(t.titleQc) === k))) || null;
+}
+
+async function matchItem(it, key, token) {
+  try {
+    const kind = state.imp.kind;
+    const results = kind === 'game' ? await rawg.search(it.title, key) : await tmdb.searchKind(it.title, kind, it.year, key);
+    if (token !== matchToken) return;
+    it.candidates = results;
+    const grade = (r) => L.matchQuality(it.title, r);
+    const best = results.find((r) => grade(r) === 'sure') || results.find((r) => grade(r) === 'likely') || results[0] || null;
+    it.match = best;
+    it.quality = best ? grade(best) : 'none';
+  } catch (err) {
+    if (token !== matchToken) return;
+    it.quality = 'error';
+    it.error = err && err.message ? err.message : 'Search failed';
+    it.match = null;
+  }
+  const ex = findExisting(it);
+  it.existingId = ex ? ex.id : null;
+  it.searched = true;
+}
+
+async function matchAll() {
+  const token = ++matchToken;
+  const imp = state.imp;
+  const key = impKey();
+  imp.noKey = !key;
+  for (const it of imp.items) {
+    if (it.heading) continue;
+    const ex = findExisting(it);
+    it.existingId = ex ? ex.id : null;
+  }
+  if (!key) {
+    for (const it of imp.items) it.searched = true;
+    render();
+    return;
+  }
+  imp.matching = true;
+  render();
+  const queue = imp.items.filter((it) => !it.heading && !it.searched);
+  const worker = async () => {
+    while (queue.length && token === matchToken) {
+      const it = queue.shift();
+      await matchItem(it, key, token);
+      if (state.route.name === 'import') requestRender();
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  if (token !== matchToken) return;
+  imp.matching = false;
+  render();
+}
+
+function startReview() {
+  const imp = state.imp;
+  if (!imp.kind || !imp.text.trim()) return;
+  imp.items = L.parseList(imp.text).map((it) => ({ ...it, include: !it.heading, status: L.defaultStatus(it), match: null, candidates: [], quality: '', searched: false, existingId: null }));
+  if (!imp.items.some((it) => !it.heading)) { toast('No titles found in that list.'); return; }
+  imp.step = 'review';
+  imp.changeId = null;
+  render();
+  window.scrollTo(0, 0);
+  matchAll();
+}
+
+function toggleHeading(id) {
+  const it = impItem(id);
+  if (!it) return;
+  it.heading = !it.heading;
+  it.include = !it.heading;
+  L.regroup(state.imp.items);
+  if (!it.heading && !it.searched) {
+    const key = impKey();
+    if (key) matchItem(it, key, matchToken).then(() => requestRender());
+    else it.searched = true;
+  }
+  render();
+}
+
+let changeTimer = null;
+let changeController = null;
+
+function toggleChange(id) {
+  const imp = state.imp;
+  if (imp.changeId === id) {
+    imp.changeId = null;
+    render();
+    return;
+  }
+  const it = impItem(id);
+  if (!it) return;
+  imp.changeId = id;
+  imp.changeQuery = it.title;
+  imp.changeResults = null;
+  imp.changeLoading = false;
+  state.ui.focusAfter = 'imp-q';
+  render();
+}
+
+function changeTyped(value) {
+  state.imp.changeQuery = value;
+  clearTimeout(changeTimer);
+  changeTimer = setTimeout(async () => {
+    const q = state.imp.changeQuery.trim();
+    if (changeController) changeController.abort();
+    if (q.length < 2) return;
+    const controller = new AbortController();
+    changeController = controller;
+    state.imp.changeLoading = true;
+    requestRender();
+    try {
+      // Any kind here: a movie listed with the shows, or the other way around, can still be found.
+      const found = state.imp.kind === 'game'
+        ? await rawg.search(q, state.settings.rawgKey, controller.signal)
+        : await tmdb.search(q, state.settings.tmdbKey, controller.signal);
+      if (controller.signal.aborted) return;
+      state.imp.changeResults = found;
+    } catch (err) {
+      if (err && err.name === 'AbortError') return;
+      state.imp.changeResults = [];
+      toast(err && err.message ? err.message : 'The search failed.');
+    }
+    state.imp.changeLoading = false;
+    requestRender();
+  }, 350);
+}
+
+function pickMatch(id, type, rid) {
+  const imp = state.imp;
+  const it = impItem(id);
+  if (!it) return;
+  const pool = [...(imp.changeResults || []), ...it.candidates];
+  const r = pool.find((x) => x.type === type && x.id === rid);
+  if (!r) return;
+  it.match = r;
+  it.quality = 'sure';
+  const ex = findExisting(it);
+  it.existingId = ex ? ex.id : null;
+  imp.changeId = null;
+  render();
+}
+
+async function importItem(it) {
+  const imp = state.imp;
+  const kind = imp.kind;
+  const useGroups = imp.useTags;
+  const existing = it.existingId ? byId(it.existingId) : null;
+  if (existing && !existing.deletedAt) {
+    L.applyLine(existing, it, { useGroups });
+    await commit(existing, `Updated from your list: ${it.line}`.slice(0, 200));
+    imp.results.updated++;
+    return;
+  }
+  let t;
+  if (it.match) {
+    const m = it.match;
+    let data;
+    if (m.type === 'game') {
+      data = await rawg.fetchGame(m.id, state.settings.rawgKey);
+    } else {
+      data = await tmdb.fetchTitle(m.type, m.id, state.settings.tmdbKey);
+      if (data.tmdbType === 'tv' && (kind === 'anime' || data.kind === 'anime')) await addAnimeGenres(data);
+    }
+    // Two lines of the same list can point to the same show.
+    const twin = M.live(state.titles).find((x) => (data.source === 'rawg' ? x.rawgId === data.rawgId : x.tmdbId === data.tmdbId && x.tmdbType === data.tmdbType));
+    if (twin) {
+      L.applyLine(twin, it, { useGroups });
+      await commit(twin, `Updated from your list: ${it.line}`.slice(0, 200));
+      imp.results.updated++;
+      return;
+    }
+    t = M.newTitle({ kind: data.source === 'rawg' ? 'game' : kind === 'game' ? data.kind : kind });
+    M.mergeScan(t, data);
+    imp.results.added++;
+  } else {
+    t = M.newTitle({ kind, title: it.title.slice(0, 300), year: it.year });
+    imp.results.manual++;
+  }
+  L.applyLine(t, it, { useGroups, status: it.status });
+  state.titles.push(t);
+  await persist(t);
+  countChange();
+  await log(t, `Imported from your list: ${it.line}`.slice(0, 200));
+}
+
+async function runImport() {
+  const imp = state.imp;
+  if (imp.matching) return;
+  const todo = imp.items.filter((it) => !it.heading && it.include);
+  if (!todo.length) return;
+  imp.step = 'running';
+  imp.total = todo.length;
+  imp.done = 0;
+  imp.current = '';
+  imp.results = { added: 0, updated: 0, manual: 0, failed: [] };
+  render();
+  window.scrollTo(0, 0);
+  const queue = [...todo];
+  const worker = async () => {
+    while (queue.length) {
+      const it = queue.shift();
+      imp.current = it.title;
+      try {
+        await importItem(it);
+      } catch (err) {
+        console.error(err);
+        imp.results.failed.push(it.title);
+      }
+      imp.done++;
+      if (state.route.name === 'import') requestRender();
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  imp.step = 'done';
+  imp.current = '';
+  if (state.route.name === 'import') render();
+  toast(`List imported · ${imp.results.added + imp.results.manual} added, ${imp.results.updated} updated`);
+}
+
 /* ---------- backup ---------- */
 
 async function exportBackup() {
@@ -1339,8 +1603,33 @@ const actions = {
   'watch-next': (el) => watchNext(el.dataset.id),
   'hero-go': (el) => {
     state.ui.heroId = el.dataset.id;
+    state.ui.heroDir = el.dataset.dir === 'prev' ? 'prev' : 'next';
     render();
   },
+  'imp-kind': (el) => { state.imp.kind = el.dataset.kind; render(); },
+  'imp-file': () => openListFile(),
+  'imp-read': () => startReview(),
+  'imp-back': () => {
+    matchToken++;
+    state.imp.matching = false;
+    state.imp.step = 'paste';
+    state.imp.changeId = null;
+    render();
+  },
+  'imp-again': () => { state.imp = importDefaults(state.imp.kind); render(); },
+  'imp-heading': (el) => toggleHeading(Number(el.dataset.id)),
+  'imp-change': (el) => toggleChange(Number(el.dataset.id)),
+  'imp-pick': (el) => pickMatch(Number(el.dataset.id), el.dataset.type, Number(el.dataset.rid)),
+  'imp-nomatch': (el) => {
+    const it = impItem(Number(el.dataset.id));
+    if (!it) return;
+    it.match = null;
+    it.quality = 'none';
+    it.existingId = findExisting(it) ? findExisting(it).id : null;
+    state.imp.changeId = null;
+    render();
+  },
+  'imp-run': () => runImport(),
   'list-cat': (el) => { state.ui.list.cat = el.dataset.cat; render(); },
   'list-clear': (el) => {
     const k = el.dataset.key;
@@ -1439,6 +1728,13 @@ document.addEventListener('input', (e) => {
     return;
   }
   if (el.id === 'scan-q') { scanTyped(el.value); return; }
+  if (el.id === 'imp-text') {
+    state.imp.text = el.value;
+    clearTimeout(listTimer);
+    listTimer = setTimeout(requestRender, 150);
+    return;
+  }
+  if (el.dataset.impQ !== undefined) { changeTyped(el.value); return; }
   if (el.id === 'add-title') { checkDuplicate(el.value); formError('add-error', ''); return; }
   if (el.dataset.setting === 'accent') { applyTheme(el.value); return; }
   const t = cur();
@@ -1477,6 +1773,17 @@ document.addEventListener('change', (e) => {
     if (el.dataset.filter === 'browseSort') state.ui.browseSort = el.value;
     else if (el.dataset.filter !== 'q') state.ui.list[el.dataset.filter] = el.value;
     requestRender();
+    return;
+  }
+  if (el.dataset.imp === 'useTags') { state.imp.useTags = el.checked; render(); return; }
+  if (el.dataset.impInclude !== undefined) {
+    const it = impItem(Number(el.dataset.impInclude));
+    if (it) { it.include = el.checked; render(); }
+    return;
+  }
+  if (el.dataset.impStatus !== undefined) {
+    const it = impItem(Number(el.dataset.impStatus));
+    if (it && M.STATUSES.includes(el.value)) { it.status = el.value; render(); }
     return;
   }
   if (el.dataset.setting) {
@@ -1544,6 +1851,15 @@ document.addEventListener('keydown', (e) => {
     const next = e.key === 'ArrowDown' ? items[Math.min(items.length - 1, at + 1)] : at <= 0 ? document.getElementById('scan-q') : items[at - 1];
     if (next) { e.preventDefault(); next.focus(); }
     return;
+  }
+  if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && state.route.name === 'home' && !dlg.open && !e.altKey && !e.ctrlKey && !e.metaKey) {
+    const tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : '';
+    if (!['input', 'textarea', 'select'].includes(tag)) {
+      const dir = e.key === 'ArrowLeft' ? 'prev' : 'next';
+      const btn = document.getElementById(`hero-side-${dir}`) || document.getElementById(`hero-${dir}`);
+      if (btn) { e.preventDefault(); btn.click(); }
+      return;
+    }
   }
   if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey || dlg.open) return;
   const tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : '';
