@@ -47,6 +47,13 @@ const day = (v) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v :
 const yearOf = (v) => (/^\d{4}/.test(v || '') ? Number(String(v).slice(0, 4)) : null);
 const image = (path, size) => (typeof path === 'string' && /^\/[\w.-]+$/.test(path) ? IMG + size + path : '');
 const genreNames = (list) => (list || []).map((g) => g && g.name).filter(Boolean).slice(0, 6);
+const dayOf = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : '');
+// TMDB names its collections "Alien Collection": the franchise is "Alien".
+const franchiseOf = (d) => (d.belongs_to_collection && Number.isInteger(d.belongs_to_collection.id) && d.belongs_to_collection.name
+  ? { id: d.belongs_to_collection.id, name: String(d.belongs_to_collection.name).replace(/\s+Collection$/i, '').trim() }
+  : null);
+const studioNames = (d) => (d.production_companies || []).map((c) => c && c.name).filter(Boolean).slice(0, 8);
+const groupsOf = (d, movie) => ({ franchise: movie ? franchiseOf(d) : null, studios: studioNames(d), released: dayOf(movie ? d.release_date : d.first_air_date), groupsAt: new Date().toISOString() });
 
 // Original title when it's English or French; otherwise the English one (Attack on Titan, not Shingeki no Kyojin).
 function mainTitle(d, type) {
@@ -167,6 +174,12 @@ export async function fetchMakers(type, id, key) {
   return showMakers(d, await get(`/tv/${id}/aggregate_credits`, { language: 'en-US' }, key));
 }
 
+// For titles saved before 1.8: franchise, studios, release day. One light call.
+export async function fetchGroups(type, id, key) {
+  const movie = type === 'movie';
+  return groupsOf(await get(`/${movie ? 'movie' : 'tv'}/${id}`, { language: 'en-US' }, key), movie);
+}
+
 // Everything about one title. Seasons come 20 at a time, the most TMDB allows per request.
 export async function fetchTitle(type, id, key, onStep) {
   if (type === 'movie') {
@@ -188,6 +201,7 @@ export async function fetchTitle(type, id, key, onStep) {
       backdrop: image(d.backdrop_path, 'w1280'),
       cast: ((d.credits && d.credits.cast) || []).slice(0, 12).map((c) => ({ name: c.name, role: c.character || '' })),
       makers: movieMakers(d.credits),
+      ...groupsOf(d, true),
       providers: watch.names.map((name) => ({ name, url: '' })),
       watchLink: watch.link,
       available: [],
@@ -229,6 +243,7 @@ export async function fetchTitle(type, id, key, onStep) {
     backdrop: image(d.backdrop_path, 'w1280'),
     cast,
     makers: showMakers(d, d.aggregate_credits),
+    ...groupsOf(d, false),
     providers: watch.names.map((name) => ({ name, url: '' })),
     watchLink: watch.link,
     available: [],

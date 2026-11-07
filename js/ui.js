@@ -39,6 +39,7 @@ export const icon = {
   tv: svg('<rect x="3" y="5" width="18" height="12" rx="1.5"/><path d="M8 21h8M12 17v4"/>', { size: 18 }),
   dice: svg('<rect x="4" y="4" width="16" height="16" rx="3"/><circle cx="9" cy="9" r="1.2" fill="currentColor"/><circle cx="15" cy="15" r="1.2" fill="currentColor"/><circle cx="15" cy="9" r="1.2" fill="currentColor"/><circle cx="9" cy="15" r="1.2" fill="currentColor"/>', { size: 22 }),
   book: svg('<path d="M5 4.5h9a3 3 0 0 1 3 3V20H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h9"/>', { size: 18 }),
+  layers: svg('<path d="M12 3.5 3 8.5l9 5 9-5z"/><path d="m3 12.5 9 5 9-5"/><path d="m3 16.5 9 5 9-5"/>', { size: 18 }),
   rows: svg('<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6h1M4 12h1M4 18h1"/>', { size: 18, stroke: 2.2 }),
   note: svg('<path d="M5 5h14v10H9l-4 4z"/>', { size: 13, stroke: 2 }),
   star: `<svg aria-hidden="true" focusable="false" class="ico" width="13" height="13" viewBox="0 0 24 24"><path d="${STAR_PATH}" fill="currentColor"/></svg>`

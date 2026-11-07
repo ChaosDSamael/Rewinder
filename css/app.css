@@ -1034,3 +1034,38 @@ a.bat-title:hover { color: var(--accent); }
 }
 .tally-tag { flex: none; font-family: var(--mono); font-size: 10.5px; letter-spacing: .04em; color: var(--dim); }
 .tally-chip.is-dup .tally-mark { display: none; }
+
+/* ---------- 1.8: filters on the poster pages, franchises and studios ---------- */
+
+.browse-filters { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 20px; margin-top: -8px; }
+.bf-picks { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.bf-picks .select { width: auto; max-width: 240px; height: 38px; font-size: 13px; }
+.select.is-on { border-color: color-mix(in oklab, var(--accent) 65%, transparent); color: var(--text); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent) 30%, transparent); }
+.bf-fav { min-height: 38px; }
+.bf-fav[aria-pressed="true"] { color: var(--text); border-color: color-mix(in oklab, var(--accent) 60%, transparent); background: var(--accent-soft); }
+.bf-fav[aria-pressed="true"] .ico { color: var(--accent); fill: var(--accent); }
+.bf-picks .link-btn { min-height: 38px; }
+
+.grp-tabs { display: inline-flex; border: 1px solid var(--line-3); border-radius: 4px; overflow: hidden; }
+.grp-tab { min-height: 38px; padding: 0 16px; background: transparent; border: 0; color: var(--muted); font-family: var(--head); font-weight: 600; font-size: 13px; letter-spacing: .1em; text-transform: uppercase; }
+.grp-tab + .grp-tab { border-left: 1px solid var(--line-3); }
+.grp-tab:hover { color: var(--text); }
+.grp-tab[aria-pressed="true"] { color: var(--text); background: var(--accent-soft); box-shadow: inset 0 -2px 0 var(--accent); }
+
+.grp-list { display: flex; flex-direction: column; gap: 44px; }
+.grp { display: flex; flex-direction: column; gap: 16px; }
+.grp-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 18px; padding-bottom: 10px; border-bottom: 1px solid var(--line-2); }
+.grp-head .h2 { margin: 0; }
+.grp-meta { font-family: var(--mono); font-size: 12px; letter-spacing: .04em; color: var(--muted); }
+.grp-avg { color: var(--accent); }
+.grp-note { display: flex; align-items: center; gap: 10px; margin: 0; font-size: 13px; color: var(--text-2); }
+.grp-note.dim { color: var(--muted); }
+
+@media (max-width: 759px) {
+  .browse-filters { margin-top: -4px; }
+  .bf-picks { width: 100%; }
+  .bf-picks .select { flex: 1 1 140px; min-width: 0; max-width: none; }
+  .grp-tabs { width: 100%; }
+  .grp-tab { flex: 1 1 0; }
+  .grp-list { gap: 34px; }
+}

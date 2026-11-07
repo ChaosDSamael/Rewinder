@@ -59,6 +59,10 @@ Rien à installer sur la TV, pas d'inscription : tu montres ton écran dessus, p
 ## Parcourir
 
 - Le mur d'affiches prend toute la largeur. Trois boutons : **petites affiches**, **grosses affiches** ou **liste**, sur All comme sur les autres pages.
+- Sous le titre, les filtres : **statut** (Watchlist, Dropped…), **genre** (Horror, Comedy…) pis **Favorites**. Ils se combinent avec le tri : « Movies · Horror · Completed · Best score ». **Clear** remet tout. Sur Home, les **See all** ouvrent le mur déjà filtré. Full List a aussi son filtre de statut.
+- Le 4e bouton (les couches) montre tes **franchises** : une rangée par franchise (Alien, Scream, Jurassic Park…), les films dans l'ordre de sortie (#1, #2…), les franchises classées par ton score moyen. L'onglet **Studios** regroupe par studio (Marvel Studios, A24…), à partir de deux titres. Les franchises viennent de TMDB : surtout des films. Pour les jeux, les studios viennent de RAWG.
+- Les titres ajoutés avant la 1.8 trouvent leur franchise tout seuls, en arrière-plan, la première fois.
+- La recherche trouve aussi les studios pis les franchises.
 - **All** montre toutes tes affiches ensemble : films, séries, animes et jeux. Trie par **Best score** pour voir ton top, avec le rang (#1, #2…) sous chaque affiche. Pratique pour ajuster une note qui te semble trop haute ou trop basse.
 - Sur une fiche, **Directed by** (films), **Created by** (séries, animes) ou **Studio** (jeux). Un clic sur le nom montre tout ce que tu as de cette personne dans la **Full List**. La recherche trouve aussi les réalisateurs. Pour les titres déjà dans ta liste, Rewinder va chercher les noms une fois, tout seul (il faut ta clé TMDB, ou RAWG pour les jeux).
 

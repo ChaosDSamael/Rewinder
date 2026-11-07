@@ -30,6 +30,11 @@ const state = {
   ui: {
     list: listDefaults(),
     browseSort: 'recent',
+    // The poster pages: what they show (status, genre, favorites) and how (franchises or studios).
+    browse: { status: '', genre: '', fav: false },
+    group: '',
+    groupSort: 'score',
+    groupFill: null,
     openSeasons: new Set(),
     openEp: null,
     addSeasonOpen: false,
@@ -1966,6 +1971,42 @@ async function fillMakers() {
   if (filled) requestRender();
 }
 
+let groupsFilling = false;
+async function fillGroups() {
+  if (groupsFilling || !state.settings.tmdbKey) return;
+  if (typeof navigator.onLine === 'boolean' && !navigator.onLine) return;
+  const todo = M.live(state.titles).filter((t) => t.tmdbId && t.tmdbType && !t.groupsAt);
+  if (!todo.length) return;
+  groupsFilling = true;
+  state.ui.groupFill = { done: 0, total: todo.length };
+  requestRender();
+  try {
+    for (const t of todo) {
+      if (t.groupsAt || t.deletedAt) { state.ui.groupFill.done++; continue; }
+      try {
+        Object.assign(t, await tmdb.fetchGroups(t.tmdbType, t.tmdbId, state.settings.tmdbKey));
+      } catch (err) {
+        if (!err || err.code !== 'notfound') break;
+        Object.assign(t, { franchise: null, studios: [], groupsAt: new Date().toISOString() });
+      }
+      try {
+        await store.putTitle(t);
+        announce({ type: 'title', id: t.id });
+      } catch (err) {
+        console.warn('Could not save the franchise of', t.title, err);
+        return;
+      }
+      state.ui.groupFill.done++;
+      if (state.ui.groupFill.done % 10 === 0) requestRender();
+      await sleep(120);
+    }
+  } finally {
+    groupsFilling = false;
+    state.ui.groupFill = null;
+    requestRender();
+  }
+}
+
 // Once a day at most, and only when something changed. After a restart the
 // browser may want its OK again: a toast then asks for it, one click.
 async function autoFolderBackup() {
@@ -2555,8 +2596,16 @@ const actions = {
   },
   'see-all': (el) => {
     const d = el.dataset;
-    state.ui.list = { ...listDefaults(), q: d.q || '', status: M.STATUSES.includes(d.status) ? d.status : '', fav: d.fav === '1' };
-    go('#/list');
+    state.ui.browse = { status: M.STATUSES.includes(d.status) ? d.status : '', genre: d.genre || '', fav: d.fav === '1' };
+    state.ui.group = '';
+    go('#/all');
+  },
+  'browse-fav': () => { state.ui.browse.fav = !state.ui.browse.fav; render(); },
+  'browse-clear': () => { state.ui.browse = { status: '', genre: '', fav: false }; render(); },
+  'browse-group': (el) => {
+    state.ui.group = el.dataset.group === 'studio' ? 'studio' : 'franchise';
+    render();
+    fillGroups().catch((err) => console.warn('Could not find the franchises', err));
   },
   'search-for': (el) => {
     state.ui.list = { ...listDefaults(), q: el.dataset.q || '' };
@@ -2564,6 +2613,7 @@ const actions = {
   },
   'browse-view': async (el) => {
     const v = el.dataset.view;
+    state.ui.group = '';
     state.settings.browseView = v === 'list' ? 'list' : 'wall';
     if (v === 'small' || v === 'large') state.settings.wallSize = v;
     render();
@@ -2750,6 +2800,9 @@ document.addEventListener('change', (e) => {
   if (el.dataset.epCheck) { setEpisodeWatched(el.dataset.epCheck, el.checked).catch(fail); return; }
   if (el.dataset.filter) {
     if (el.dataset.filter === 'browseSort') state.ui.browseSort = el.value;
+    else if (el.dataset.filter === 'browseStatus') state.ui.browse.status = M.STATUSES.includes(el.value) ? el.value : '';
+    else if (el.dataset.filter === 'browseGenre') state.ui.browse.genre = el.value;
+    else if (el.dataset.filter === 'groupSort') state.ui.groupSort = ['score', 'count', 'name'].includes(el.value) ? el.value : 'score';
     else if (el.dataset.filter !== 'q') state.ui.list[el.dataset.filter] = el.value;
     requestRender();
     return;
@@ -2912,7 +2965,9 @@ async function start() {
     checkNewSeasons()
       .catch((err) => console.warn('Season check failed', err))
       .then(() => fillMakers())
-      .catch((err) => console.warn('Could not fill who made the titles', err));
+      .catch((err) => console.warn('Could not fill who made the titles', err))
+      .then(() => fillGroups())
+      .catch((err) => console.warn('Could not find the franchises', err));
     autoFolderBackup().catch((err) => console.warn('Folder backup failed', err));
   }, 2500);
   setTimeout(nudgeShare, 4000);

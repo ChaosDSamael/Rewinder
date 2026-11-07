@@ -109,7 +109,7 @@ export const footer = () => `<footer class="foot"><span>Rewinder · v${M.APP_VER
 function cardMeta(t, rank) {
   if (rank) {
     const score = M.effectiveScore(t);
-    return [`#${rank}`, `★ ${score.toFixed(1)}`, t.year].filter(Boolean).join(' · ');
+    return [`#${rank}`, score !== null ? `★ ${score.toFixed(1)}` : '', t.year].filter(Boolean).join(' · ');
   }
   if (t.newSeason !== null) {
     const s = M.findSeason(t, t.newSeason);
@@ -283,7 +283,7 @@ export function homeView(state) {
     { id: 'favorites', title: 'Favorites', items: all.filter((t) => t.fav).sort(byActivity), see: { fav: '1' } },
     { id: 'recent', title: 'Recently Added', items: [...all].sort((a, b) => b.createdAt.localeCompare(a.createdAt)) }
   ];
-  for (const g of M.topGenres(all)) rows.push({ id: 'g-' + g.toLowerCase().replace(/[^a-z0-9]+/g, '-'), title: g, items: all.filter((t) => t.genres.includes(g)).sort(byActivity), see: { q: g } });
+  for (const g of M.topGenres(all)) rows.push({ id: 'g-' + g.toLowerCase().replace(/[^a-z0-9]+/g, '-'), title: g, items: all.filter((t) => t.genres.includes(g)).sort(byActivity), see: { genre: g } });
   return `<div class="page page-home">
 ${hero ? heroBlock(hero, state, heroes) : all.length ? '' : heroWelcome()}
 ${rows.filter((r) => r.items.length).map(rowSection).join('')}
@@ -305,7 +305,6 @@ export function listView(state) {
     && M.matches(t, f.q)), f.sort);
   const cats = [['all', 'All'], ...M.KINDS.map((k) => [k, M.KIND_TAB[k]])];
   const active = [];
-  if (f.status) active.push(`<button type="button" class="chip chip-sm chip-on" data-action="list-clear" data-key="status">Status: ${M.STATUS_LABEL[f.status]}${icon.x}</button>`);
   if (f.fav) active.push(`<button type="button" class="chip chip-sm chip-on" data-action="list-clear" data-key="fav">Favorites only${icon.x}</button>`);
   return `<div class="page page-list">
 <div class="page-head"><div class="titles"><span class="eyebrow">// Everything you logged</span><h1 class="display display-md">Full List</h1></div><span class="head-count">${rows.length === all.length ? plural(all.length, 'title') : `${rows.length} of ${all.length}`}</span></div>
@@ -314,6 +313,7 @@ export function listView(state) {
 <div class="filter-tools">
 <div class="search">${icon.search}<label class="sr" for="q-list">Filter the list</label><input id="q-list" type="search" placeholder="Title, actor, director, genre, tag or friend" value="${esc(f.q)}" data-filter="q" autocomplete="off" spellcheck="false"></div>
 <label class="sr" for="plat-list">Platform</label><select id="plat-list" class="select" data-filter="platform"><option value="">All platforms</option>${platforms.map((p) => `<option value="${esc(p)}"${p === f.platform ? ' selected' : ''}>${esc(p)}</option>`).join('')}</select>
+<label class="sr" for="status-list">Status</label><select id="status-list" class="select" data-filter="status"><option value="">All statuses</option>${M.STATUSES.map((x) => `<option value="${x}"${x === f.status ? ' selected' : ''}>${M.STATUS_LABEL[x]}</option>`).join('')}</select>
 <label class="sr" for="sort-list">Sort by</label><select id="sort-list" class="select" data-filter="sort">${sortOptions(f.sort)}</select>
 </div>
 </div>
@@ -323,26 +323,67 @@ ${titleTable(rows, { q: f.q, emptyText: all.length ? 'No titles match. Try anoth
 }
 
 // One kind, or "all": every poster in one wall (the Full List is the table of everything).
+// Filters (status, genre, favorites) and a view by franchise or studio.
+function groupBody(state, list, every) {
+  const by = state.ui.group === 'studio' ? 'studio' : 'franchise';
+  const groups = M.groupTitles(list, by, state.ui.groupSort);
+  const fill = state.ui.groupFill;
+  const waiting = M.live(state.titles).filter((t) => t.tmdbId && t.tmdbType && !t.groupsAt).length;
+  const note = fill
+    ? `<p class="grp-note"><span class="ping-inline" aria-hidden="true"></span>Looking up franchises and studios on TMDB… ${fill.done} of ${fill.total}</p>`
+    : waiting && !state.settings.tmdbKey ? '<p class="grp-note">Add your TMDB key in Settings: franchises and studios come from TMDB.</p>' : '';
+  const loose = list.filter((t) => (by === 'studio' ? !M.studiosOf(t).length : !t.franchise)).length;
+  if (!groups.length) {
+    return `${note}<div class="empty-box"><p class="lead">${by === 'studio' ? 'No studio with two titles here yet.' : 'No franchise here yet.'}</p><p class="set-text dim">${by === 'studio' ? 'Studios come from TMDB, and from RAWG for games.' : 'Franchises come from TMDB and cover movies: Alien, Scream, Jurassic Park…'}</p></div>`;
+  }
+  return `${note}<div class="grp-list">${groups.map((g) => `<section class="grp" data-key="grp-${esc(by)}-${esc(g.name)}" aria-label="${esc(g.name)}">
+<div class="grp-head"><h2 class="h2"><span class="sq" aria-hidden="true"></span>${esc(g.name)}</h2><span class="grp-meta">${esc(plural(g.items.length, 'title'))}${g.avg !== null ? ` · <span class="grp-avg">★ ${g.avg.toFixed(1)}</span> average` : ' · not rated yet'}</span></div>
+<div class="wall wall-sm">${g.items.map((t, i) => card(t, { kind: every, rank: by === 'franchise' ? i + 1 : 0 })).join('')}</div>
+</section>`).join('')}</div>
+${loose ? `<p class="grp-note dim">${esc(plural(loose, 'title'))} here ${loose === 1 ? 'is' : 'are'} not part of ${by === 'studio' ? 'a studio with two titles' : 'a franchise'}.</p>` : ''}`;
+}
+
 export function browseView(state, kind) {
   const every = kind === 'all';
   const all = M.live(state.titles).filter((t) => every || t.kind === kind);
+  const f = state.ui.browse;
+  const group = state.ui.group;
   const view = state.settings.browseView === 'list' ? 'list' : 'wall';
   const size = state.settings.wallSize === 'large' || state.settings.wallSize === 'small' ? state.settings.wallSize : state.ui.narrow ? 'large' : 'small';
-  const list = M.sortTitles(all, state.ui.browseSort);
-  const body = !all.length
+  const shown = all.filter((t) => (!f.status || t.status === f.status) && (!f.genre || t.genres.includes(f.genre)) && (!f.fav || t.fav));
+  const list = M.sortTitles(shown, state.ui.browseSort);
+  const filtered = Boolean(f.status || f.genre || f.fav);
+  const genres = M.genreCounts(all);
+  if (f.genre && !genres.some(([g]) => g === f.genre)) genres.push([f.genre, 0]);
+  const empty = !all.length
     ? `<div class="empty-box"><p class="lead">${every ? 'Nothing here yet.' : `No ${KIND_PLURAL[kind]} yet.`}</p><button type="button" class="btn btn-primary" data-action="add"${every ? '' : ` data-kind="${kind}"`}>${icon.plus}${every ? 'Add a title' : `Add ${A_KIND[kind]}`}</button></div>`
-    : view === 'wall' ? `<div class="wall wall-${size === 'large' ? 'lg' : 'sm'}">${list.map((t, i) => card(t, { kind: every, rank: state.ui.browseSort === 'score' && M.effectiveScore(t) !== null ? i + 1 : 0 })).join('')}</div>` : titleTable(list, { showKind: every });
+    : !list.length ? '<div class="empty-box"><p class="lead">Nothing matches these filters.</p><button type="button" class="btn btn-ghost" data-action="browse-clear">Clear the filters</button></div>' : '';
+  const body = empty || (group ? groupBody(state, list, every)
+    : view === 'wall' ? `<div class="wall wall-${size === 'large' ? 'lg' : 'sm'}">${list.map((t, i) => card(t, { kind: every, rank: state.ui.browseSort === 'score' && M.effectiveScore(t) !== null ? i + 1 : 0 })).join('')}</div>` : titleTable(list, { showKind: every }));
   const pick = (v, label, ico, on) => `<button type="button" class="icon-btn" data-action="browse-view" data-view="${v}" aria-pressed="${on}" aria-label="${label}" title="${label}">${ico}</button>`;
   const chip = (href, label, current) => `<a class="kind-chip" href="${href}"${current ? ' aria-current="page"' : ''}>${label}</a>`;
-  return `<div class="page page-list${view === 'wall' ? ' page-wall' : ''}">
+  const tab = (g, label) => `<button type="button" class="grp-tab" data-action="browse-group" data-group="${g}" aria-pressed="${group === g}">${label}</button>`;
+  const sortSelect = group
+    ? `<label class="sr" for="sort-group">Order the ${group === 'studio' ? 'studios' : 'franchises'}</label><select id="sort-group" class="select" data-filter="groupSort">${[['score', 'Best average'], ['count', 'Most titles'], ['name', 'A–Z']].map(([v, l]) => `<option value="${v}"${state.ui.groupSort === v ? ' selected' : ''}>${l}</option>`).join('')}</select>`
+    : `<label class="sr" for="sort-browse">Sort by</label><select id="sort-browse" class="select" data-filter="browseSort">${sortOptions(state.ui.browseSort)}</select>`;
+  return `<div class="page page-list${group || view === 'wall' ? ' page-wall' : ''}">
 <nav class="kind-chips" aria-label="Kinds">${chip('#/all', 'All', every)}${M.KINDS.map((k) => chip('#/' + M.KIND_PATH[k], M.KIND_TAB[k], kind === k)).join('')}</nav>
-<div class="page-head"><div class="titles"><span class="eyebrow">// ${plural(all.length, 'title')}</span><h1 class="display display-md">${every ? 'All' : M.KIND_TAB[kind]}</h1></div>
+<div class="page-head"><div class="titles"><span class="eyebrow">// ${filtered ? `${list.length} of ${plural(all.length, 'title')}` : plural(all.length, 'title')}</span><h1 class="display display-md">${every ? 'All' : M.KIND_TAB[kind]}</h1></div>
 <div class="filter-tools">
-<label class="sr" for="sort-browse">Sort by</label><select id="sort-browse" class="select" data-filter="browseSort">${sortOptions(state.ui.browseSort)}</select>
-<div class="seg-btns" role="group" aria-label="View">${pick('small', 'Small posters', icon.gridSm, view === 'wall' && size === 'small')}${pick('large', 'Large posters', icon.grid, view === 'wall' && size === 'large')}${pick('list', 'List', icon.rows, view === 'list')}</div>
+${sortSelect}
+<div class="seg-btns" role="group" aria-label="View">${pick('small', 'Small posters', icon.gridSm, !group && view === 'wall' && size === 'small')}${pick('large', 'Large posters', icon.grid, !group && view === 'wall' && size === 'large')}${pick('list', 'List', icon.rows, !group && view === 'list')}<button type="button" class="icon-btn" data-action="browse-group" data-group="${group || 'franchise'}" aria-pressed="${Boolean(group)}" aria-label="Franchises and studios" title="Franchises and studios">${icon.layers}</button></div>
 <button type="button" class="btn btn-ghost" data-action="add"${every ? '' : ` data-kind="${kind}"`}>${icon.plus}Add</button>
 </div>
 </div>
+${all.length ? `<div class="browse-filters">
+<div class="bf-picks" role="group" aria-label="Show">
+<label class="sr" for="bf-status">Status</label><select id="bf-status" class="select select-sm${f.status ? ' is-on' : ''}" data-filter="browseStatus"><option value="">All statuses</option>${M.STATUSES.map((x) => `<option value="${x}"${x === f.status ? ' selected' : ''}>${M.STATUS_LABEL[x]}</option>`).join('')}</select>
+<label class="sr" for="bf-genre">Genre</label><select id="bf-genre" class="select select-sm${f.genre ? ' is-on' : ''}" data-filter="browseGenre"><option value="">All genres</option>${genres.map(([g, n]) => `<option value="${esc(g)}"${g === f.genre ? ' selected' : ''}>${esc(g)} · ${n}</option>`).join('')}</select>
+<button type="button" class="chip chip-sm bf-fav" data-action="browse-fav" aria-pressed="${f.fav}">${icon.heart}Favorites</button>
+${filtered ? `<button type="button" class="link-btn" data-action="browse-clear">Clear</button>` : ''}
+</div>
+${group ? `<div class="grp-tabs" role="group" aria-label="Group by">${tab('franchise', 'Franchises')}${tab('studio', 'Studios')}</div>` : ''}
+</div>` : ''}
 ${body}
 </div>`;
 }

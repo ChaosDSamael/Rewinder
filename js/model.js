@@ -1,6 +1,6 @@
 // Rewinder — data helpers. Pure functions: no DOM, no storage.
 
-export const APP_VERSION = '1.7.0';
+export const APP_VERSION = '1.8.0';
 
 export const KINDS = ['movie', 'tv', 'anime', 'game'];
 export const KIND_LABEL = { movie: 'Movie', tv: 'TV Show', anime: 'Anime', game: 'Game' };
@@ -195,6 +195,7 @@ export function newTitle(fields = {}) {
     poster: '', backdrop: '', status: 'watchlist', fav: false, score: null, notes: '',
     tags: [], via: '', views: [], platforms: [], game: { story: null, full: null },
     seasons: [], cast: [], makers: null, providers: [], newSeason: null,
+    franchise: null, studios: [], released: '', groupsAt: null,
     tmdbId: null, tmdbType: '', watchLink: '', scannedAt: null, rawgId: null, rawgSlug: '', available: [],
     createdAt: now, updatedAt: now, lastActivity: now, deletedAt: null,
     ...fields
@@ -271,6 +272,11 @@ export function normalizeTitle(raw) {
       };
     }).filter((p, i, all) => p.name && all.findIndex((q) => q.name.toLowerCase() === p.name.toLowerCase()) === i) : [],
     newSeason: Number.isInteger(r.newSeason) ? r.newSeason : null,
+    // groupsAt null: never asked TMDB for the franchise and studios (a title saved before 1.8).
+    franchise: r.franchise && Number.isInteger(r.franchise.id) && r.franchise.name ? { id: r.franchise.id, name: String(r.franchise.name).slice(0, 120) } : null,
+    studios: strList(r.studios, 8),
+    released: dayOrNull(r.released) || '',
+    groupsAt: r.groupsAt ? String(r.groupsAt) : null,
     tmdbId: Number.isInteger(r.tmdbId) && r.tmdbId > 0 ? r.tmdbId : null,
     tmdbType: r.tmdbType === 'movie' || r.tmdbType === 'tv' ? r.tmdbType : '',
     watchLink: typeof r.watchLink === 'string' && r.watchLink.startsWith('https://www.themoviedb.org/') ? r.watchLink : '',
@@ -283,6 +289,41 @@ export function normalizeTitle(raw) {
     lastActivity: String(r.lastActivity || r.updatedAt || base.lastActivity),
     deletedAt: r.deletedAt ? String(r.deletedAt) : null
   };
+}
+
+// Every genre in a list, the biggest first.
+export function genreCounts(titles) {
+  const counts = new Map();
+  for (const t of titles) for (const g of t.genres || []) counts.set(g, (counts.get(g) || 0) + 1);
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+}
+
+// Studios: TMDB's production companies; for games, the studios RAWG lists.
+export const studiosOf = (t) => (t.kind === 'game' ? (t.makers || []).filter((x) => x.role === 'Studio').map((x) => x.name) : t.studios || []);
+
+const releaseKey = (t) => t.released || (t.year ? `${t.year}-99` : '9999');
+
+// Franchises (TMDB collections, movies) or studios: each group in release order, the best average first.
+export function groupTitles(list, by, sort = 'score') {
+  const map = new Map();
+  for (const t of list) {
+    const keys = by === 'studio' ? studiosOf(t) : t.franchise ? [t.franchise.name] : [];
+    for (const name of keys) {
+      if (!map.has(name)) map.set(name, []);
+      map.get(name).push(t);
+    }
+  }
+  const groups = [...map.entries()]
+    .filter(([, items]) => by !== 'studio' || items.length >= 2)
+    .map(([name, items]) => {
+      items.sort((a, b) => releaseKey(a).localeCompare(releaseKey(b)) || a.title.localeCompare(b.title));
+      const scores = items.map(effectiveScore).filter((v) => v !== null);
+      return { name, items, rated: scores.length, avg: scores.length ? Math.round((scores.reduce((x, y) => x + y, 0) / scores.length) * 10) / 10 : null };
+    });
+  if (sort === 'count') groups.sort((a, b) => b.items.length - a.items.length || a.name.localeCompare(b.name));
+  else if (sort === 'name') groups.sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));
+  else groups.sort((a, b) => (b.avg ?? -1) - (a.avg ?? -1) || b.items.length - a.items.length || a.name.localeCompare(b.name));
+  return groups;
 }
 
 export function topGenres(titles, limit = 3) {
@@ -339,7 +380,7 @@ export const platformsOf = (t) => [...(t.providers || []).map((p) => p.name), ..
 export function matches(t, needle) {
   const q = String(needle || '').trim().toLowerCase();
   if (!q) return true;
-  const hay = [t.title, t.titleQc, t.via, String(t.year || ''), ...(t.tags || []), ...(t.genres || []), ...(t.cast || []).map((c) => c.name), ...(t.makers || []).map((x) => x.name), ...platformsOf(t)].join(' \u0001 ').toLowerCase();
+  const hay = [t.title, t.titleQc, t.via, String(t.year || ''), ...(t.tags || []), ...(t.genres || []), ...(t.cast || []).map((c) => c.name), ...(t.makers || []).map((x) => x.name), ...platformsOf(t), ...(t.studios || []), t.franchise ? t.franchise.name : ''].join(' \u0001 ').toLowerCase();
   return q.split(/\s+/).every((word) => hay.includes(word));
 }
 
@@ -420,6 +461,7 @@ export function mergeScan(t, s) {
   if (s.backdrop) t.backdrop = s.backdrop;
   if (s.cast.length) t.cast = s.cast;
   if (Array.isArray(s.makers)) t.makers = s.makers;
+  if (s.groupsAt) Object.assign(t, { franchise: s.franchise || null, studios: s.studios || [], released: s.released || t.released, groupsAt: s.groupsAt });
   t.watchLink = s.watchLink || '';
   mergeProviders(t, s);
   return mergeSeasons(t, s);
