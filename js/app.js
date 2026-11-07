@@ -2054,7 +2054,7 @@ function pickTonight() {
   if (still || pool.length === 1) {
     state.ui.tvSpin = false;
     state.ui.tvShow = final.id;
-    state.ui.focusAfter = 'tv-first';
+    state.ui.focusAfter = 'tv-pick';
     render();
     return;
   }
@@ -2066,9 +2066,8 @@ function pickTonight() {
     if (step >= steps) {
       state.ui.tvSpin = false;
       state.ui.tvShow = final.id;
+      state.ui.focusAfter = 'tv-pick';
       render();
-      const again = document.querySelector('[data-action="tv-pick"]');
-      if (again) again.focus();
       return;
     }
     state.ui.tvShow = pool[(Math.floor(Math.random() * pool.length) + step) % pool.length].id;

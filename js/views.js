@@ -953,8 +953,8 @@ export function tvView(state) {
 <div class="tv-pick${state.ui.tvSpin ? ' spinning' : ''}">
 ${pick ? `<span class="tv-poster tv-poster-xl" style="background:${M.artFor(pick)}" aria-hidden="true">${pick.poster ? `<img src="${esc(pick.poster)}" alt="" referrerpolicy="no-referrer">` : `<span class="tv-poster-title">${esc(pick.title)}</span>`}</span>
 <div class="tv-pick-text" aria-live="polite">${state.ui.tvSpin ? '<span class="tv-eyebrow">// Picking…</span>' : `<span class="tv-eyebrow">// Tonight</span><h2 class="tv-detail-title">${esc(pick.title)}</h2><p class="tv-detail-line">${esc(tvMeta(pick))}</p>${pick.genres.length ? `<p class="tv-detail-genres">${pick.genres.map((g) => `<span>${esc(g)}</span>`).join('')}</p>` : ''}${(pick.providers || []).length ? `<p class="tv-detail-line">Where to watch: ${esc(pick.providers.map((x) => x.name).join(', '))}</p>` : ''}`}
-<div class="tv-actions"><button type="button" class="tv-btn tv-btn-main" data-action="tv-pick" data-tv${state.ui.tvSpin ? ' disabled' : ''}>${icon.dice}Pick again</button>${state.ui.tvSpin ? '' : `<button type="button" class="tv-btn" data-action="tv-open" data-id="${esc(pick.id)}" data-tv>More about it</button>`}</div>
-</div>` : `<button type="button" class="tv-btn tv-btn-main tv-btn-big" data-action="tv-pick" data-tv>${icon.dice}Pick for me</button>`}
+<div class="tv-actions"><button type="button" class="tv-btn tv-btn-main" id="tv-pick" data-action="tv-pick" data-tv${state.ui.tvSpin ? ' disabled' : ''}>${icon.dice}Pick again</button>${state.ui.tvSpin ? '' : `<button type="button" class="tv-btn" data-action="tv-open" data-id="${esc(pick.id)}" data-tv>More about it</button>`}</div>
+</div>` : `<button type="button" class="tv-btn tv-btn-main tv-btn-big" id="tv-pick" data-action="tv-pick" data-tv>${icon.dice}Pick for me</button>`}
 </div>`;
   }
   const detail = state.ui.tvDetail ? all.find((t) => t.id === state.ui.tvDetail) : null;
