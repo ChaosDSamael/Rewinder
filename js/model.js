@@ -1,6 +1,6 @@
 // Rewinder — data helpers. Pure functions: no DOM, no storage.
 
-export const APP_VERSION = '1.10.2';
+export const APP_VERSION = '1.11.0';
 
 export const KINDS = ['movie', 'tv', 'anime', 'game'];
 export const KIND_LABEL = { movie: 'Movie', tv: 'TV Show', anime: 'Anime', game: 'Game' };
@@ -51,7 +51,9 @@ export const DEFAULT_SETTINGS = {
   // The server your name and secret belong to: they are never sent anywhere else.
   liveHost: '',
   liveSig: '',
-  liveAt: null
+  liveAt: null,
+  // The key to your list on the server: it stays on your devices (never in a backup, never sent to the server).
+  syncKey: ''
 };
 export const TRASH_DAYS = 30;
 
@@ -647,6 +649,62 @@ const refOf = (t) => ({
   tmdb: t.tmdbId && t.tmdbType ? `${t.tmdbType}:${t.tmdbId}` : null,
   rawg: t.rawgId || null
 });
+
+// Two copies of one title on your devices (added on each before they were joined): the same TMDB or RAWG
+// number, or, without numbers on both, the same kind, name and year.
+export function sameTitle(a, b) {
+  if (!a || !b || a.id === b.id) return false;
+  const tmdbA = a.tmdbId && a.tmdbType ? `${a.tmdbType}:${a.tmdbId}` : '';
+  const tmdbB = b.tmdbId && b.tmdbType ? `${b.tmdbType}:${b.tmdbId}` : '';
+  if (tmdbA && tmdbB) return tmdbA === tmdbB;
+  if (a.rawgId && b.rawgId) return a.rawgId === b.rawgId;
+  if (kindClass(a.kind) !== kindClass(b.kind) || !a.year || a.year !== b.year) return false;
+  const name = plain(a.title);
+  return Boolean(name) && name === plain(b.title);
+}
+
+// One title out of two copies: the one changed last leads, and nothing either one knew is lost
+// (viewings, watched episodes, scores, notes, tags). Every device does the same, under the same id.
+export function mergeTwins(a, b, id) {
+  const newer = Date.parse(b.updatedAt) > Date.parse(a.updatedAt);
+  const base = newer ? b : a;
+  const other = newer ? a : b;
+  const t = JSON.parse(JSON.stringify(base));
+  t.id = id;
+  t.fav = Boolean(a.fav || b.fav);
+  if (typeof t.score !== 'number' && typeof other.score === 'number') t.score = other.score;
+  const mine = String(t.notes || '').trim();
+  const theirs = String(other.notes || '').trim();
+  if (!mine) t.notes = other.notes || '';
+  else if (theirs && !mine.includes(theirs) && !theirs.includes(mine)) t.notes = `${t.notes}\n\n${other.notes}`;
+  else if (theirs.includes(mine)) t.notes = other.notes;
+  t.tags = [...new Set([...(t.tags || []), ...(other.tags || [])])];
+  t.platforms = [...new Set([...(t.platforms || []), ...(other.platforms || [])])];
+  const days = new Set((t.views || []).map((v) => v.date));
+  for (const v of other.views || []) if (!days.has(v.date)) { t.views.push({ date: v.date }); days.add(v.date); }
+  t.game = { story: (t.game && t.game.story) || (other.game && other.game.story) || null, full: (t.game && t.game.full) || (other.game && other.game.full) || null };
+  for (const os of other.seasons || []) {
+    const s = (t.seasons || []).find((x) => x.n === os.n);
+    if (!s) { t.seasons.push(JSON.parse(JSON.stringify(os))); continue; }
+    if (typeof s.score !== 'number' && typeof os.score === 'number') s.score = os.score;
+    if (!String(s.notes || '').trim() && os.notes) s.notes = os.notes;
+    for (const oe of os.episodes || []) {
+      const e = s.episodes.find((x) => x.n === oe.n);
+      if (!e) { s.episodes.push(JSON.parse(JSON.stringify(oe))); continue; }
+      if (!e.watched && oe.watched) e.watched = oe.watched;
+      if (typeof e.score !== 'number' && typeof oe.score === 'number') e.score = oe.score;
+      if (!String(e.note || '').trim() && oe.note) e.note = oe.note;
+    }
+  }
+  for (const key of ['tmdbId', 'tmdbType', 'rawgId', 'rawgSlug', 'watchLink', 'scannedAt', 'via', 'poster', 'backdrop', 'overview']) {
+    if (!t[key] && other[key]) t[key] = other[key];
+  }
+  t.createdAt = [a.createdAt, b.createdAt].filter(Boolean).sort()[0] || t.createdAt;
+  t.lastActivity = [a.lastActivity, b.lastActivity].filter(Boolean).sort().pop() || t.lastActivity;
+  // Just after both copies, not "now": newer than either, but never newer than a change made after them elsewhere.
+  t.updatedAt = new Date(Math.max(Date.parse(a.updatedAt) || 0, Date.parse(b.updatedAt) || 0) + 1).toISOString();
+  return normalizeTitle(t);
+}
 
 // Your card: scores, statuses, favorites and tags. Never notes, dates, history or recommendations.
 export function makeCard(titles, { id, name }) {

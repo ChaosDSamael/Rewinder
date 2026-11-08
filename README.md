@@ -90,9 +90,17 @@ Rien à installer sur la TV, pas d'inscription : tu montres ton écran dessus, p
 
 - **Settings → Friends** : choisis ton nom Rewinder (3 à 24 lettres ou chiffres, `. _ -` permis au milieu) avec le code d'invitation que Sonny t'a donné. Premier arrivé, premier servi.
 - **Friends → Add a friend by name** : ton ami reçoit une demande (un point sur **Friends**). Quand il dit **Accept**, vous voyez vos cartes l'un l'autre, pis elles se mettent à jour toutes seules : ta carte part environ 20 secondes après ton dernier changement, pis celle de tes amis arrive quand tu ouvres Rewinder ou **Friends**.
-- Sur le serveur : ton nom pis ta carte (titres, scores, statuts, favoris, tags). Jamais tes notes, tes dates ou tes clés. Seulement les amis que tu as acceptés voient ta carte. Une carte pas mise à jour depuis 5 mois est effacée (règle de TMDB : rien de gardé plus de 6 mois).
-- Ton nom vit sur un appareil à la fois (chaque appareil a sa propre liste). **Move my name to another device** donne un code à coller sur l'autre appareil (**Move my name here**) : le code marche une seule fois, pendant 15 minutes, pis l'ancien appareil arrête de partager.
-- **Remove** sur la page d'un ami : vous arrêtez de voir vos cartes. **Remove my name and card** efface tout sur le serveur.
+- Sur le serveur : ton nom, ta carte pour tes amis (titres, scores, statuts, favoris, tags), pis ta liste au complet pour tes appareils, barrée avec une clé qui reste sur tes appareils. Jamais tes clés TMDB pis RAWG. Seulement les amis que tu as acceptés voient ta carte. Ce qui n'est pas mis à jour depuis 5 mois est effacé (règle de TMDB : rien de gardé plus de 6 mois).
+
+### Tes appareils (ordi, cell, tablette)
+
+- Ton nom va sur tous tes appareils, avec la même liste. Sur un appareil qui a ton nom : **Settings → Friends → Add another device**. Ça donne un code. Sur l'autre appareil : **Settings → Friends → Add this device**, colle le code. Les deux gardent ton nom.
+- Si l'autre appareil avait déjà sa liste, les deux listes deviennent une seule. Un titre qui était des deux bords devient un seul titre, sans rien perdre (visionnements, épisodes vus, scores, notes, tags).
+- Après ça, ce que tu changes sur un appareil arrive sur les autres tout seul : quelques secondes après ton changement, pis quand tu ouvres Rewinder. Si le même titre change sur deux appareils en même temps, le changement le plus récent gagne.
+- Le code marche une fois, pendant 15 minutes. Il contient la clé de ta liste : envoie-le juste à toi-même.
+- **Settings → Friends** montre tes appareils. **Remove** sur un appareil perdu ou donné : il arrête de suivre ta liste tout de suite. Ce qui était déjà dessus y reste.
+- Une copie de sauvegarde reste ta copie à toi. La restaurer ramène ses titres comme ils étaient, sur tous tes appareils.
+- **Remove** sur la page d'un ami : vous arrêtez de voir vos cartes. **Remove my name and card** efface tout sur le serveur : ton nom, ta carte, ta liste. Chaque appareil garde sa liste à lui.
 - Les cartes en fichier marchent encore : **Send my card as a file** pis **Add a card file**.
 
 ### Le serveur (une fois, pour Sonny)
@@ -116,8 +124,11 @@ Ce qui protège Rewinder pis tes amis :
 - Tes clés TMDB pis RAWG vont seulement chez TMDB pis RAWG. Elles ne vont jamais dans une copie de sauvegarde ni dans une carte. Une copie de sauvegarde ne peut pas changer tes clés, ton serveur ou tes couleurs.
 - Les liens vers les magasins (Steam, PlayStation, Xbox, Nintendo…) s'ouvrent seulement vers les vrais magasins. Un lien vers ailleurs est enlevé.
 - Ton nom Rewinder : ton appareil a un secret que le serveur ne garde jamais (juste son empreinte). Ce secret part seulement vers le serveur où ton nom a été créé : changer l'adresse du serveur ne l'envoie nulle part ailleurs.
-- Le code pour changer d'appareil ne contient jamais le secret, marche une fois, pis expire après 15 minutes. Rewinder montre le nom pis demande de confirmer avant de l'utiliser. Un code pour un autre serveur, ou un code qui ment sur le nom, est refusé.
-- Le serveur : il faut le code d'invitation pour se créer un nom. Une adresse qui se trompe de code 10 fois attend une heure, pis une adresse crée 5 noms par jour au maximum. Chaque changement est fait d'un coup (une transaction) : deux personnes sont amies des deux bords, ou pas pantoute. Une carte s'ouvre seulement si les deux ont dit oui. Une carte au plus aux 10 secondes, 1 Mo au maximum, 200 amis. Un nom effacé reste bloqué 7 jours, pour que personne le prenne tout de suite pis reçoive les demandes de quelqu'un d'autre.
+- Ta liste sur le serveur est barrée (AES-256) sur ton appareil avant de partir, avec une clé qui ne va jamais sur le serveur. Le serveur (pis Sonny, pis Cloudflare) voit juste des données brouillées, un numéro de titre pis l'heure du changement. Chaque titre est barré avec son numéro : le serveur ne peut pas échanger un titre pour un autre.
+- Chaque appareil a son propre secret. Un appareil enlevé est dehors tout de suite. Le dernier appareil ne peut pas s'enlever (on efface le nom à la place).
+- Le code pour ajouter un appareil ne contient jamais de secret, marche une fois, pis expire après 15 minutes. Il contient la clé de ta liste : Rewinder montre le nom pis avertit que celui qui a fait le code voit toute la liste, avant de l'utiliser. Un code pour un autre serveur, ou un code qui ment sur le nom, est refusé.
+- Un serveur qui envoie n'importe quoi : rien ne s'ouvre sans la clé, donc rien n'entre dans ta liste pis rien ne part. Rewinder le dit dans **Settings → Friends**.
+- Le serveur : il faut le code d'invitation pour se créer un nom. Une adresse qui se trompe de code 10 fois attend une heure, pis une adresse crée 5 noms par jour au maximum. Chaque changement est fait d'un coup (une transaction) : deux personnes sont amies des deux bords, ou pas pantoute. Une carte s'ouvre seulement si les deux ont dit oui. Une carte au plus aux 10 secondes, 1 Mo au maximum, 200 amis. Une liste : 30 Mo au maximum par nom, 10 appareils. Passé 400 Mo, les listes arrêtent de grossir (le plan gratuit arrête à 500 Mo), pour que les noms, les amis pis les cartes continuent de marcher. Un nom effacé reste bloqué 7 jours, pour que personne le prenne tout de suite pis reçoive les demandes de quelqu'un d'autre.
 - Un ami « live » s'affiche sous son nom Rewinder, pas sous le nom libre de sa carte : personne ne peut se faire passer pour quelqu'un d'autre en écrivant « Sonny » sur sa carte. Sa carte ne peut pas non plus prendre la place de la carte d'un autre ami.
 
 Ce que toi tu dois faire (Sonny) :
@@ -130,7 +141,9 @@ Ce qui reste (connu, accepté) :
 
 - Quelqu'un de méchant peut inonder le serveur gratuit de requêtes. Cloudflare coupe à 100 000 requêtes par jour, pis ça repart le lendemain. Rien n'est perdu, les amis par fichier marchent encore.
 - Quelqu'un qui a le code d'invitation peut réserver des noms (5 par jour par adresse).
-- Toi (ou quelqu'un qui prend ton compte Cloudflare) peux lire les cartes sur le serveur. Jamais les notes, les dates ou les clés : elles n'y sont pas.
+- Toi (ou quelqu'un qui prend ton compte Cloudflare) peux lire les cartes sur le serveur. Les listes, non : elles sont barrées.
+- Celui qui contrôle le code de Rewinder (ton compte GitHub) pourrait changer l'app pour qu'elle envoie les clés ailleurs. C'est pour ça que la 2FA sur GitHub compte.
+- Un appareil enlevé garde ce qui était déjà dessus. Pour un cell perdu, c'est le verrouillage du cell qui protège ça.
 
 ## Importer une liste
 

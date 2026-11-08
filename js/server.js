@@ -65,28 +65,50 @@ async function call(base, path, { method = 'GET', auth, body, etag, ms = 20000 }
   }
 }
 
-export const claim = (base, name, invite, secret) => call(base, '/v1/claim', { method: 'POST', body: { name, invite, secret } });
+export const claim = (base, name, invite, secret) => call(base, '/v1/claim', { method: 'POST', body: { name, invite, secret, label: deviceLabel() } });
 export const whoami = (base, auth) => call(base, '/v1/me', { auth });
 export const publish = (base, auth, card) => call(base, '/v1/card', { method: 'PUT', auth, body: card, ms: 30000 });
 export const cardOf = (base, auth, name, etag) => call(base, '/v1/card/' + encodeURIComponent(name), { auth, etag, ms: 30000 });
 // what: request, accept, decline, cancel or unfriend.
 export const tell = (base, auth, what, name) => call(base, '/v1/' + what, { method: 'POST', auth, body: { name } });
-// Moving your name: the old device asks for a one-time code (15 minutes); the new one trades it for its own secret.
-export const transfer = (base, auth) => call(base, '/v1/transfer', { method: 'POST', auth });
-export const move = (base, code, secret) => call(base, '/v1/move', { method: 'POST', body: { code, secret } });
+// Adding a device: one of yours asks for a one-time code (15 minutes); the new one trades it for its own secret.
+export const transfer = (base, auth) => call(base, '/v1/transfer', { method: 'POST', auth, body: { label: deviceLabel() } });
+export const move = (base, code, secret) => call(base, '/v1/move', { method: 'POST', body: { code, secret, label: deviceLabel() } });
 export const leave = (base, auth) => call(base, '/v1/me', { method: 'DELETE', auth });
+export const devices = (base, auth) => call(base, '/v1/devices', { auth });
+// id: one of your devices, or 'self' for this one.
+export const dropDevice = (base, auth, id) => call(base, '/v1/devices/' + encodeURIComponent(id), { method: 'DELETE', auth });
+// Your list between your devices: what changed since a bookmark, and what changed here.
+export const pull = (base, auth, since, after) => call(base, `/v1/items?since=${Number(since) || 0}&after=${encodeURIComponent(after || '')}`, { auth, ms: 30000 });
+export const push = (base, auth, items) => call(base, '/v1/items', { method: 'POST', auth, body: { items }, ms: 60000 });
 
-// One line to paste on your other device: the server, your name and the one-time code. Never your secret.
-export const moveCode = (base, name, code) => 'RW2.' + b64url(new TextEncoder().encode(JSON.stringify({ v: base, n: name, c: code })));
+// What this device is called in your list of devices: just the kind of device, nothing that identifies you.
+export function deviceLabel() {
+  const ua = String((globalThis.navigator && navigator.userAgent) || '');
+  if (/iPhone/.test(ua)) return 'iPhone';
+  if (/iPad/.test(ua) || (/Macintosh/.test(ua) && globalThis.navigator && navigator.maxTouchPoints > 1)) return 'iPad';
+  if (/Android/.test(ua)) return /Mobile/.test(ua) ? 'Android phone' : 'Android tablet';
+  if (/CrOS/.test(ua)) return 'Chromebook';
+  if (/Windows/.test(ua)) return 'Windows';
+  if (/Macintosh|Mac OS/.test(ua)) return 'Mac';
+  if (/Linux/.test(ua)) return 'Linux';
+  return 'Device';
+}
+
+// One line to paste on your other device: the server, your name, the one-time code, and the key to your list.
+// Never your secret. Whoever reads it before it's used can join your name: send it only to yourself.
+export const moveCode = (base, name, code, key) => 'RW3.' + b64url(new TextEncoder().encode(JSON.stringify({ v: base, n: name, c: code, k: key })));
 
 export function readMoveCode(text) {
-  const m = String(text || '').match(/RW2\.([A-Za-z0-9_-]{20,2000})/);
-  if (!m) return null;
+  const raw = String(text || '');
+  const m = raw.match(/RW3\.([A-Za-z0-9_-]{20,3000})/);
+  if (!m) return /RW[12]\.[A-Za-z0-9_-]{20,}/.test(raw) ? { old: true } : null;
   try {
     const o = JSON.parse(fromB64url(m[1]));
     const base = cleanBase(o.v);
-    if (!base || typeof o.n !== 'string' || !NAME.test(o.n) || typeof o.c !== 'string' || !/^[A-Za-z0-9_-]{32,128}$/.test(o.c)) return null;
-    return { base, name: o.n, code: o.c };
+    if (!base || typeof o.n !== 'string' || !NAME.test(o.n) || typeof o.c !== 'string' || !/^[A-Za-z0-9_-]{32,128}$/.test(o.c)
+      || typeof o.k !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(o.k)) return null;
+    return { base, name: o.n, code: o.c, key: o.k };
   } catch {
     return null;
   }

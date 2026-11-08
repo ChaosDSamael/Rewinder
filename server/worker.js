@@ -1,6 +1,8 @@
 // Rewinder friends server: a Cloudflare Worker with one D1 database (binding DB) and one secret (INVITE).
 // It keeps names, friend requests, friendships and each person's card. A card is what the app sends:
 // titles, scores, statuses, favorites and tags. Never API keys, notes or dates.
+// It also carries each person's list between their own devices, locked: the devices lock it with a key
+// that never comes here. This server only ever sees scrambled bytes, a title id and when it changed.
 //
 // Why D1 (SQL) and not KV: every change here is one transaction. Two people become friends in the same
 // instant on both sides, or not at all; a removed friend can never slip back in from a stale copy.
@@ -8,7 +10,7 @@
 // Who sees what: a card goes only to people both sides accepted.
 // Who gets in: creating a name takes the group's invite code (16 characters or more, or the server stays shut).
 // Each device proves its name with a secret it made itself; the server only keeps a fingerprint (SHA-256).
-// Moving a name to another device takes a one-time code that expires in 15 minutes; it never carries the secret.
+// Adding a device takes a one-time code made on one of yours; it expires in 15 minutes and never carries a secret.
 // Wrong codes are counted per address: 10 an hour, then that address waits.
 
 const ORIGINS = new Set(['https://chaosdsamael.github.io']);
@@ -28,6 +30,22 @@ const TICKET_TTL = 15 * 60e3;
 const NAME_HOLD = 7 * DAY;
 // One card update every 10 seconds per name at most.
 const CARD_GAP = 10000;
+const MAX_DEVICES = 10;
+// Your list, between your devices: pushes up to 1.5 MB, an item up to 400 KB, 30 MB per name.
+const MAX_SYNC = 1500000;
+const MAX_ITEM = 400000;
+const MAX_PUSH = 200;
+const USER_BYTES = 30000000;
+const PAGE = 50;
+const PAGE_BYTES = 2000000;
+// The free plan stops a database at 500 MB: past 400 MB, lists stop growing so names, friends and cards keep working.
+const DB_FULL = 400000000;
+// A list no device synced for 5 months leaves the server, like a card (the devices keep theirs).
+const SYNC_TTL = CARD_TTL;
+const ITEM_ID = /^[A-Za-z0-9_.:-]{1,80}$/;
+const B64 = /^[A-Za-z0-9_-]+$/;
+const DEVICE_ID = /^[A-Za-z0-9_-]{6,32}$/;
+let dbSize = 0;
 
 const keyOf = (name) => String(name).toLowerCase();
 
@@ -37,7 +55,7 @@ function cors(request, env) {
   return {
     'Access-Control-Allow-Origin': ok ? origin : 'https://chaosdsamael.github.io',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Authorization, Content-Type, If-None-Match, X-Rewinder-Name',
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type, If-None-Match, X-Rewinder-Name, X-Rewinder-Device',
     'Access-Control-Expose-Headers': 'ETag',
     'Access-Control-Max-Age': '86400',
     Vary: 'Origin'
@@ -54,6 +72,10 @@ class Refusal extends Error {
 
 const b64url = (bytes) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const newCode = () => b64url(crypto.getRandomValues(new Uint8Array(32)));
+const newId = () => b64url(crypto.getRandomValues(new Uint8Array(9)));
+// What a device calls itself ("iPhone", "Windows"): plain words only, short.
+const cleanLabel = (v) => String(v || '').replace(/[^A-Za-z0-9 ._()-]/g, '').trim().slice(0, 40);
+const iso = (ms) => (Number.isFinite(ms) && ms > 0 ? new Date(ms).toISOString() : null);
 
 async function fingerprint(text) {
   const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)));
@@ -79,9 +101,9 @@ async function body(request, limit) {
   return text;
 }
 
-async function readJson(request) {
+async function readJson(request, limit = MAX_SMALL) {
   try {
-    return JSON.parse(await body(request, MAX_SMALL));
+    return JSON.parse(await body(request, limit));
   } catch (err) {
     if (err instanceof Refusal) throw err;
     throw new Refusal(400, 'bad-json', 'The server could not read that.');
@@ -96,7 +118,16 @@ const SCHEMA = [
   'CREATE TABLE IF NOT EXISTS cards (k TEXT PRIMARY KEY, body TEXT NOT NULL, at TEXT NOT NULL, t INTEGER NOT NULL)',
   'CREATE INDEX IF NOT EXISTS cards_t ON cards (t)',
   'CREATE TABLE IF NOT EXISTS tickets (h TEXT PRIMARY KEY, k TEXT NOT NULL, until INTEGER NOT NULL)',
-  'CREATE TABLE IF NOT EXISTS limits (k TEXT PRIMARY KEY, n INTEGER NOT NULL, until INTEGER NOT NULL)'
+  'CREATE TABLE IF NOT EXISTS limits (k TEXT PRIMARY KEY, n INTEGER NOT NULL, until INTEGER NOT NULL)',
+  // One row per device. users.hash: 'on' for a name with devices, a fingerprint for a name made before devices
+  // (its one secret becomes its first device the next time it signs in), null for a removed name.
+  'CREATE TABLE IF NOT EXISTS devices (h TEXT PRIMARY KEY, id TEXT NOT NULL, k TEXT NOT NULL, label TEXT NOT NULL, at INTEGER NOT NULL, seen INTEGER NOT NULL)',
+  'CREATE INDEX IF NOT EXISTS devices_k ON devices (k)',
+  // One row per title of a list: u = when it changed (the newest wins), v = the order the server got it in.
+  'CREATE TABLE IF NOT EXISTS items (k TEXT NOT NULL, id TEXT NOT NULL, u INTEGER NOT NULL, v INTEGER NOT NULL, d TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY (k, id))',
+  'CREATE INDEX IF NOT EXISTS items_kv ON items (k, v, id)',
+  'CREATE TABLE IF NOT EXISTS seqs (k TEXT PRIMARY KEY, n INTEGER NOT NULL, t INTEGER NOT NULL, bytes INTEGER NOT NULL)',
+  'CREATE INDEX IF NOT EXISTS seqs_t ON seqs (t)'
 ];
 let schemaReady = null;
 const ready = (env) => (schemaReady ||= env.DB.batch(SCHEMA.map((sql) => env.DB.prepare(sql))).catch((err) => { schemaReady = null; throw err; }));
@@ -125,16 +156,35 @@ async function guard(request, env, now) {
 }
 const wrong = (request, env, now) => within(env, BAD(request), 10, HOUR, now);
 
-async function signedIn(request, env) {
+const legacy = (hash) => Boolean(hash) && hash !== 'on';
+// A name made before devices: its one secret becomes its first device.
+const migrate = (env, k, h, id, label, now) => [
+  env.DB.prepare('INSERT OR IGNORE INTO devices (h, id, k, label, at, seen) VALUES (?1, ?2, ?3, ?4, ?5, ?5)').bind(h, id, k, label, now),
+  env.DB.prepare("UPDATE users SET hash = 'on' WHERE k = ?1 AND hash = ?2").bind(k, h)
+];
+
+async function signedIn(request, env, now) {
   const name = request.headers.get('X-Rewinder-Name') || '';
   const auth = request.headers.get('Authorization') || '';
   const secret = auth.startsWith('Bearer ') ? auth.slice(7) : '';
   const out = new Refusal(401, 'signed-out', 'Your Rewinder name is not on this device.');
   if (!NAME.test(name) || !SECRET.test(secret)) throw out;
-  const user = await env.DB.prepare('SELECT k, name, hash FROM users WHERE k = ?1 AND hash IS NOT NULL').bind(keyOf(name)).first();
-  if (!user || !equal(user.hash, await fingerprint(secret))) throw out;
-  return user;
+  const h = await fingerprint(secret);
+  const row = await env.DB.prepare(`SELECT u.k AS k, u.name AS name, u.hash AS hash, d.id AS device, d.seen AS seen
+    FROM users u LEFT JOIN devices d ON d.h = ?1 AND d.k = u.k WHERE u.k = ?2 AND u.hash IS NOT NULL`).bind(h, keyOf(name)).first();
+  if (!row) throw out;
+  if (row.device) return { k: row.k, name: row.name, device: row.device, seen: row.seen, h };
+  if (!legacy(row.hash) || !equal(row.hash, h)) throw out;
+  const id = newId();
+  await env.DB.batch(migrate(env, row.k, h, id, cleanLabel(request.headers.get('X-Rewinder-Device')), now));
+  return { k: row.k, name: row.name, device: id, seen: now, h };
 }
+
+// Keeps the database size the last write reported: past DB_FULL, lists stop growing.
+const sized = (results) => {
+  for (const r of [].concat(results)) if (r && r.meta && Number.isFinite(r.meta.size_after)) dbSize = r.meta.size_after;
+  return results;
+};
 
 // Changes cost writes (100,000 a day for everyone on the free plan): 600 a day per name is plenty for a person.
 async function spend(env, me, now) {
@@ -151,7 +201,7 @@ async function route(request, env, url, now) {
 
   if (path === '/v1/claim' && method === 'POST') {
     await guard(request, env, now);
-    const { name, invite, secret } = await readJson(request);
+    const { name, invite, secret, label } = await readJson(request);
     if (!env.INVITE || String(env.INVITE).length < MIN_INVITE) throw new Refusal(503, 'no-invite', 'The server needs an invite code of 16 characters or more.');
     if (!equal(String(invite || '').trim(), env.INVITE)) {
       await wrong(request, env, now);
@@ -160,35 +210,53 @@ async function route(request, env, url, now) {
     if (typeof name !== 'string' || !NAME.test(name)) throw new Refusal(400, 'bad-name', 'A name is 3 to 24 letters or numbers (. _ - inside).');
     if (typeof secret !== 'string' || !SECRET.test(secret)) throw new Refusal(400, 'bad-secret', 'The app sent a bad secret.');
     if (!(await within(env, 'claim:' + ipOf(request), 5, DAY, now))) throw new Refusal(429, 'wait', 'Too many new names from here today.');
-    // One statement: two people asking for the same name at once can't both get it.
-    const made = await env.DB.prepare(`INSERT INTO users (k, name, hash, at, gone) VALUES (?1, ?2, ?3, ?4, NULL)
-      ON CONFLICT (k) DO UPDATE SET name = excluded.name, hash = excluded.hash, at = excluded.at, gone = NULL
-      WHERE users.hash IS NULL AND users.gone < ?5`).bind(keyOf(name), name, await fingerprint(secret), new Date(now).toISOString(), now - NAME_HOLD).run();
+    const h = await fingerprint(secret);
+    const k = keyOf(name);
+    const id = newId();
+    // The first statement decides: two people asking for the same name at once can't both get it.
+    // The device goes in only if the name is now this secret's, in the same transaction.
+    const [made] = sized(await env.DB.batch([
+      env.DB.prepare(`INSERT INTO users (k, name, hash, at, gone) VALUES (?1, ?2, ?3, ?4, NULL)
+        ON CONFLICT (k) DO UPDATE SET name = excluded.name, hash = excluded.hash, at = excluded.at, gone = NULL
+        WHERE users.hash IS NULL AND users.gone < ?5`).bind(k, name, h, new Date(now).toISOString(), now - NAME_HOLD),
+      env.DB.prepare('INSERT OR IGNORE INTO devices (h, id, k, label, at, seen) SELECT ?1, ?2, ?3, ?4, ?5, ?5 WHERE EXISTS (SELECT 1 FROM users WHERE k = ?3 AND hash = ?1)')
+        .bind(h, id, k, cleanLabel(label), now),
+      env.DB.prepare("UPDATE users SET hash = 'on' WHERE k = ?1 AND hash = ?2").bind(k, h)
+    ]));
     if (!made.meta.changes) throw new Refusal(409, 'taken', `${name} is already taken.`);
-    return json({ name }, 201);
+    return json({ name, device: id }, 201);
   }
 
-  // Arriving on a new device: the one-time code from the old one, and this device's own new secret.
+  // A new device for a name: the one-time code made on one of its devices, and this device's own new secret.
+  // The other devices keep working.
   if (path === '/v1/move' && method === 'POST') {
     await guard(request, env, now);
-    const { code, secret } = await readJson(request);
+    const { code, secret, label } = await readJson(request);
     if (typeof code !== 'string' || !SECRET.test(code)) throw new Refusal(400, 'bad-code', 'That code is not right, or it expired.');
     if (typeof secret !== 'string' || !SECRET.test(secret)) throw new Refusal(400, 'bad-secret', 'The app sent a bad secret.');
     const h = await fingerprint(code);
-    // The new secret is written only if the code still exists; the code goes in the same transaction: it works once.
-    const [moved] = await env.DB.batch([
-      env.DB.prepare(`UPDATE users SET hash = ?1 WHERE hash IS NOT NULL AND k = (SELECT k FROM tickets WHERE h = ?2 AND until > ?3)`).bind(await fingerprint(secret), h, now),
-      env.DB.prepare('DELETE FROM tickets WHERE h = ?1').bind(h)
-    ]);
-    if (!moved.meta.changes) {
+    const ticket = await env.DB.prepare(`SELECT t.k AS k, u.name AS name, u.hash AS hash, (SELECT COUNT(*) FROM devices WHERE k = t.k) AS n
+      FROM tickets t JOIN users u ON u.k = t.k AND u.hash IS NOT NULL WHERE t.h = ?1 AND t.until > ?2`).bind(h, now).first();
+    if (!ticket) {
       await wrong(request, env, now);
       throw new Refusal(404, 'bad-code', 'That code is not right, or it expired.');
     }
-    const who = await env.DB.prepare('SELECT u.name FROM users u WHERE u.hash = ?1').bind(await fingerprint(secret)).first();
-    return json({ name: who ? who.name : '' });
+    if (ticket.n >= MAX_DEVICES) throw new Refusal(400, 'too-many-devices', `${ticket.name} is on ${MAX_DEVICES} devices already. Remove one first.`);
+    const id = newId();
+    const steps = legacy(ticket.hash) ? migrate(env, ticket.k, ticket.hash, newId(), '', now) : [];
+    // The device goes in only if the code is still there; the code goes in the same transaction: it works once.
+    steps.push(env.DB.prepare('INSERT INTO devices (h, id, k, label, at, seen) SELECT ?1, ?2, k, ?3, ?4, ?4 FROM tickets WHERE h = ?5 AND until > ?4')
+      .bind(await fingerprint(secret), id, cleanLabel(label), now, h));
+    steps.push(env.DB.prepare('DELETE FROM tickets WHERE h = ?1').bind(h));
+    const done = sized(await env.DB.batch(steps));
+    if (!done[done.length - 2].meta.changes) {
+      await wrong(request, env, now);
+      throw new Refusal(404, 'bad-code', 'That code is not right, or it expired.');
+    }
+    return json({ name: ticket.name, device: id });
   }
 
-  const me = await signedIn(request, env);
+  const me = await signedIn(request, env, now);
 
   if (path === '/v1/me' && method === 'GET') {
     const [friends, incoming, outgoing] = await env.DB.batch([
@@ -197,7 +265,8 @@ async function route(request, env, url, now) {
       env.DB.prepare('SELECT u.name AS name FROM asks q JOIN users u ON u.k = q.src AND u.hash IS NOT NULL WHERE q.dst = ?1 ORDER BY q.t').bind(me.k),
       env.DB.prepare('SELECT u.name AS name FROM asks q JOIN users u ON u.k = q.dst AND u.hash IS NOT NULL WHERE q.src = ?1 ORDER BY q.t').bind(me.k)
     ]);
-    return json({ name: me.name, friends: friends.results.map((r) => ({ name: r.name, at: r.at || null })), incoming: incoming.results.map((r) => r.name), outgoing: outgoing.results.map((r) => r.name) });
+    if (!(me.seen > now - HOUR)) await env.DB.prepare('UPDATE devices SET seen = ?2 WHERE h = ?1').bind(me.h, now).run();
+    return json({ name: me.name, device: me.device, friends: friends.results.map((r) => ({ name: r.name, at: r.at || null })), incoming: incoming.results.map((r) => r.name), outgoing: outgoing.results.map((r) => r.name) });
   }
 
   if (path === '/v1/me' && method === 'DELETE') {
@@ -207,20 +276,97 @@ async function route(request, env, url, now) {
       env.DB.prepare('DELETE FROM asks WHERE src = ?1 OR dst = ?1').bind(me.k),
       env.DB.prepare('DELETE FROM cards WHERE k = ?1').bind(me.k),
       env.DB.prepare('DELETE FROM tickets WHERE k = ?1').bind(me.k),
+      env.DB.prepare('DELETE FROM devices WHERE k = ?1').bind(me.k),
+      env.DB.prepare('DELETE FROM items WHERE k = ?1').bind(me.k),
+      env.DB.prepare('DELETE FROM seqs WHERE k = ?1').bind(me.k),
       env.DB.prepare('UPDATE users SET hash = NULL, gone = ?2 WHERE k = ?1').bind(me.k, now)
     ]);
     return json({ gone: true });
   }
 
-  // Leaving for another device: a code that works once, for 15 minutes. A new one replaces the old one.
+  // Adding a device: a code that works once, for 15 minutes. A new one replaces the old one.
   if (path === '/v1/transfer' && method === 'POST') {
+    // The device asking may say what it is (a device from before devices has no name yet).
+    const label = Number(request.headers.get('Content-Length')) > 0 ? cleanLabel((await readJson(request)).label) : '';
     if (!(await within(env, 't:' + me.k, 10, DAY, now))) throw new Refusal(429, 'busy-day', 'That is a lot of codes for one day. Try again tomorrow.');
     const code = newCode();
     await env.DB.batch([
       env.DB.prepare('DELETE FROM tickets WHERE k = ?1 OR until < ?2').bind(me.k, now),
-      env.DB.prepare('INSERT INTO tickets (h, k, until) VALUES (?1, ?2, ?3)').bind(await fingerprint(code), me.k, now + TICKET_TTL)
+      env.DB.prepare('INSERT INTO tickets (h, k, until) VALUES (?1, ?2, ?3)').bind(await fingerprint(code), me.k, now + TICKET_TTL),
+      env.DB.prepare("UPDATE devices SET label = ?2 WHERE h = ?1 AND label = '' AND ?2 <> ''").bind(me.h, label)
     ]);
     return json({ code, expires: new Date(now + TICKET_TTL).toISOString() });
+  }
+
+  if (path === '/v1/devices' && method === 'GET') {
+    const rows = await env.DB.prepare('SELECT id, label, at, seen FROM devices WHERE k = ?1 ORDER BY at, id').bind(me.k).all();
+    return json({ devices: rows.results.map((r) => ({ id: r.id, label: r.label, at: iso(r.at), seen: iso(r.seen), me: r.id === me.device })) });
+  }
+
+  const devicePath = path.match(/^\/v1\/devices\/([^/]+)$/);
+  if (devicePath && method === 'DELETE') {
+    const id = devicePath[1] === 'self' ? me.device : devicePath[1];
+    if (!DEVICE_ID.test(id)) throw new Refusal(400, 'bad-device', 'That is not one of your devices.');
+    await spend(env, me, now);
+    // Never the last one: a name with no device could never be used again (remove the name instead).
+    const gone = await env.DB.prepare('DELETE FROM devices WHERE k = ?1 AND id = ?2 AND (SELECT COUNT(*) FROM devices WHERE k = ?1) > 1').bind(me.k, id).run();
+    if (!gone.meta.changes) {
+      const there = await env.DB.prepare('SELECT 1 AS ok FROM devices WHERE k = ?1 AND id = ?2').bind(me.k, id).first();
+      if (there) throw new Refusal(409, 'last-device', 'That is your only device. To stop, remove your name and card.');
+      throw new Refusal(404, 'no-device', 'That device is already gone.');
+    }
+    return json({ gone: id });
+  }
+
+  // Your list, from your other devices: what changed since the last time, in the order the server got it.
+  // What this device sent itself comes back without its body: it only moves the bookmark forward.
+  if (path === '/v1/items' && method === 'GET') {
+    const since = Number(url.searchParams.get('since') || 0);
+    const after = url.searchParams.get('after') || '';
+    if (!Number.isSafeInteger(since) || since < 0 || (after && !ITEM_ID.test(after))) throw new Refusal(400, 'bad-cursor', 'The app asked for a bad page.');
+    const rows = await env.DB.prepare(`SELECT id, u, v, CASE WHEN d = ?2 THEN NULL ELSE body END AS body FROM items
+      WHERE k = ?1 AND (v > ?3 OR (v = ?3 AND id > ?4)) ORDER BY v, id LIMIT ${PAGE + 1}`).bind(me.k, me.device, since, after).all();
+    const items = [];
+    let bytes = 0;
+    for (const r of rows.results.slice(0, PAGE)) {
+      if (items.length && bytes + (r.body ? r.body.length : 0) > PAGE_BYTES) break;
+      bytes += r.body ? r.body.length : 0;
+      items.push({ id: r.id, u: r.u, v: r.v, b: r.body });
+    }
+    // Opening Rewinder keeps your list here (once a day at most), even if nothing changed.
+    await env.DB.prepare('UPDATE seqs SET t = ?2 WHERE k = ?1 AND t < ?3').bind(me.k, now, now - DAY).run();
+    return json({ items, more: items.length < rows.results.length });
+  }
+
+  if (path === '/v1/items' && method === 'POST') {
+    const data = await readJson(request, MAX_SYNC);
+    const list = data && Array.isArray(data.items) ? data.items : null;
+    if (!list || !list.length || list.length > MAX_PUSH) throw new Refusal(400, 'bad-items', 'The app sent a bad list.');
+    for (const x of list) {
+      if (!x || typeof x.id !== 'string' || !ITEM_ID.test(x.id) || !Number.isSafeInteger(x.u) || x.u <= 0
+        || typeof x.b !== 'string' || !x.b.length || x.b.length > MAX_ITEM || !B64.test(x.b)) throw new Refusal(400, 'bad-items', 'The app sent a bad list.');
+    }
+    if (!(await within(env, 's:' + me.k, 3000, DAY, now))) throw new Refusal(429, 'busy-day', 'That is a lot of syncing for one day. Try again tomorrow.');
+    if (dbSize > DB_FULL) throw new Refusal(507, 'server-full', 'The Rewinder server is full. Sonny has to make room.');
+    const items = list.map((x) => ({ id: x.id, u: x.u, b: x.b }));
+    const add = items.reduce((n, x) => n + x.b.length, 0);
+    const room = await env.DB.prepare(`SELECT COALESCE((SELECT bytes FROM seqs WHERE k = ?1), 0) AS bytes,
+      (SELECT COALESCE(SUM(length(body)), 0) FROM items WHERE k = ?1 AND id IN (SELECT value FROM json_each(?2))) AS old`)
+      .bind(me.k, JSON.stringify(items.map((x) => x.id))).first();
+    if (room.bytes - room.old + add > USER_BYTES) throw new Refusal(413, 'list-full', 'Your list is too big for the server.');
+    // One transaction: the order number, then every title that is newer than the one already here.
+    const done = sized(await env.DB.batch([
+      env.DB.prepare('INSERT INTO seqs (k, n, t, bytes) VALUES (?1, 1, ?2, 0) ON CONFLICT (k) DO UPDATE SET n = n + 1, t = ?2').bind(me.k, now),
+      env.DB.prepare(`INSERT INTO items (k, id, u, v, d, body)
+        SELECT ?1, json_extract(j.value, '$.id'), json_extract(j.value, '$.u'), (SELECT n FROM seqs WHERE k = ?1), ?3, json_extract(j.value, '$.b')
+        FROM json_each(?2) AS j WHERE 1
+        ON CONFLICT (k, id) DO UPDATE SET u = excluded.u, v = excluded.v, d = excluded.d, body = excluded.body WHERE excluded.u >= items.u`)
+        .bind(me.k, JSON.stringify(items), me.device),
+      env.DB.prepare('UPDATE seqs SET bytes = (SELECT COALESCE(SUM(length(body)), 0) FROM items WHERE k = ?1) WHERE k = ?1').bind(me.k),
+      env.DB.prepare('DELETE FROM items WHERE k IN (SELECT k FROM seqs WHERE t < ?1)').bind(now - SYNC_TTL),
+      env.DB.prepare('DELETE FROM seqs WHERE t < ?1').bind(now - SYNC_TTL)
+    ]));
+    return json({ stored: done[1].meta.changes });
   }
 
   if (path === '/v1/card' && method === 'PUT') {
@@ -233,11 +379,11 @@ async function route(request, env, url, now) {
     await spend(env, me, now);
     const at = new Date(now).toISOString();
     card.at = at;
-    await env.DB.batch([
+    sized(await env.DB.batch([
       env.DB.prepare(`INSERT INTO cards (k, body, at, t) VALUES (?1, ?2, ?3, ?4)
         ON CONFLICT (k) DO UPDATE SET body = excluded.body, at = excluded.at, t = excluded.t`).bind(me.k, JSON.stringify(card), at, now),
       env.DB.prepare('DELETE FROM cards WHERE t < ?1').bind(now - CARD_TTL)
-    ]);
+    ]));
     return json({ at });
   }
 

@@ -133,6 +133,36 @@ export async function historyFor(titleId, limit = 15) {
   return all.sort((a, b) => b.seq - a.seq).slice(0, limit);
 }
 
+// History from your other devices: the lines this device doesn't have yet join, nothing is replaced.
+export async function mergeHistory(titleId, entries) {
+  if (!entries || !entries.length) return 0;
+  const db = await open();
+  const tx = db.transaction('history', 'readwrite');
+  const historyStore = tx.objectStore('history');
+  const have = await result(historyStore.index('byTitle').getAll(titleId));
+  const seen = new Set(have.map((h) => `${h.at}|${h.text}`));
+  let added = 0;
+  for (const h of entries) {
+    if (seen.has(`${h.at}|${h.text}`)) continue;
+    seen.add(`${h.at}|${h.text}`);
+    historyStore.add({ titleId, at: h.at, text: String(h.text).slice(0, 300) });
+    added++;
+  }
+  await finished(tx);
+  return added;
+}
+
+// Two copies of a title became one: the history follows the one that stays.
+export async function moveHistory(fromId, toId) {
+  if (fromId === toId) return;
+  const db = await open();
+  const tx = db.transaction('history', 'readwrite');
+  const historyStore = tx.objectStore('history');
+  const lines = await result(historyStore.index('byTitle').getAll(fromId));
+  for (const h of lines) historyStore.put({ ...h, titleId: toId });
+  await finished(tx);
+}
+
 // The backup leaves the API keys out: a backup file can travel, a key should not.
 export async function exportAll() {
   const db = await open();
@@ -146,6 +176,7 @@ export async function exportAll() {
   delete safe.tmdbKey;
   delete safe.rawgKey;
   delete safe.liveSecret;
+  delete safe.syncKey;
   return { app: 'rewinder', format: 1, exportedAt: new Date().toISOString(), titles, history, settings: safe };
 }
 
@@ -154,9 +185,11 @@ export function isBackup(data) {
   return Boolean(data && data.app === 'rewinder' && data.kind !== 'card' && Array.isArray(data.titles));
 }
 
-export async function importAll(data) {
+// bump: the restored titles count as changed now, so they win on your other devices too.
+export async function importAll(data, { bump = false } = {}) {
   if (!isBackup(data)) throw new Error('This file is not a Rewinder backup.');
-  const titles = data.titles.map(normalizeTitle);
+  const now = new Date().toISOString();
+  const titles = data.titles.map(normalizeTitle).map((t) => (bump ? { ...t, updatedAt: now } : t));
   const history = Array.isArray(data.history) ? data.history : [];
   const db = await open();
   const tx = db.transaction(['titles', 'history'], 'readwrite');

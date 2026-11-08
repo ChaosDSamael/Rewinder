@@ -7,6 +7,7 @@ import * as rawg from './rawg.js';
 import { animeGenres } from './anilist.js';
 import * as L from './importer.js';
 import * as S from './server.js';
+import * as Y from './sync.js';
 import { esc } from './ui.js';
 import { morphChildren } from './morph.js';
 
@@ -29,7 +30,9 @@ const state = {
   titles: [],
   settings: { ...M.DEFAULT_SETTINGS },
   // Friends by name: requests waiting, friends on the server, the last check.
-  live: { incoming: [], outgoing: [], friends: [], checkedAt: 0, error: '' },
+  live: { incoming: [], outgoing: [], friends: [], checkedAt: 0, error: '', devices: null },
+  // Your list on all your devices: syncing now, the last time it worked, what went wrong.
+  sync: { busy: false, at: null, error: '', blocked: '' },
   route: { name: 'home' },
   current: null,
   history: {},
@@ -242,6 +245,7 @@ function onRoute() {
           : r.name === 'friend' && friendById(r.id) ? `${friendById(r.id).name} · Rewinder`
             : r.name === 'tv' ? 'TV mode · Rewinder' : r.name === 'guides' ? 'Guides · Rewinder' : r.name === 'added' ? 'Just added · Rewinder' : 'Rewinder';
   if (t) loadHistory(t.id);
+  if (r.name === 'settings' && prev.name !== 'settings' && liveOn()) loadDevices();
 }
 
 async function loadHistory(id) {
@@ -381,6 +385,7 @@ function countChange() {
   staleTimer = setTimeout(() => { if (state.ready && !state.error && cardStale() !== state.ui.cardStale) requestRender(); }, 250);
   state.settings.changesSinceBackup = (state.settings.changesSinceBackup || 0) + 1;
   publishSoon();
+  syncSoon();
   clearTimeout(settingsTimer);
   settingsTimer = setTimeout(() => { settingsTimer = null; putSettingsNow().catch(console.error); }, 500);
 }
@@ -444,6 +449,7 @@ document.addEventListener('visibilitychange', () => {
     flushSaves();
     // Leaving the app: a card change still waiting goes now.
     if (publishTimer) publishNow().catch((err) => console.warn('Could not send your card', err));
+    if (syncTimer) syncNow().catch((err) => console.warn('Could not sync your list', err));
   } else {
     liveRefresh().catch((err) => console.warn('Could not check your friends', err));
   }
@@ -838,6 +844,7 @@ async function purgeTitle(id) {
   try {
     await store.deleteTitle(id);
     announce({ type: 'title', id });
+    await noteGone(id);
     countChange();
   } catch (err) {
     console.error(err);
@@ -851,7 +858,10 @@ async function purgeExpired() {
   if (!expired.length) return;
   state.titles = state.titles.filter((t) => !expired.includes(t));
   for (const t of expired) {
-    try { await store.deleteTitle(t.id); } catch (err) { console.warn(err); }
+    try {
+      await store.deleteTitle(t.id);
+      await noteGone(t.id);
+    } catch (err) { console.warn(err); }
   }
 }
 
@@ -2445,16 +2455,22 @@ const sameName = (a, b) => String(a || '').toLowerCase() === String(b || '').toL
 // A live friend's card is filed under their Rewinder name, never under the id the card itself claims.
 const liveId = (name) => 'live-' + String(name).toLowerCase();
 
-// The server no longer knows this device: the name moved to another one, or was removed.
+// The server no longer knows this device: it was removed from your devices, or the name was removed.
 function liveFailed(err) {
   if (!err || err.status !== 401) return false;
   const name = state.settings.liveName;
-  Object.assign(state.settings, { liveName: '', liveSecret: '', liveHost: '', liveSig: '', liveAt: null });
-  state.live = { incoming: [], outgoing: [], friends: [], checkedAt: 0, error: '' };
-  saveSettings();
+  forgetName();
   render();
-  toast(`${name} is no longer on this device: the name moved to another device, or was removed.`, { timeout: 0 });
+  toast(`${name} is no longer on this device: it was removed from your devices, or the name was removed. Your list stays here.`, { timeout: 0 });
   return true;
+}
+
+// This device lets go of the name and the key to your list. Its own list stays.
+function forgetName() {
+  Object.assign(state.settings, { liveName: '', liveSecret: '', liveHost: '', liveSig: '', liveAt: null, syncKey: '' });
+  state.live = { incoming: [], outgoing: [], friends: [], checkedAt: 0, error: '', devices: null };
+  saveSettings();
+  resetSync().catch((err) => console.warn(err));
 }
 
 function liveCard() {
@@ -2511,6 +2527,277 @@ async function publishNow(force = false) {
   return publishing;
 }
 
+/* ---------- your list on all your devices ---------- */
+// Every device with your name holds the same list. What changes on one goes to the server locked (js/sync.js);
+// the others pick it up. For each title, the newest change wins. A title deleted forever leaves a small "gone"
+// note, so it leaves your other devices too.
+let syncMeta = null;
+let syncing = null;
+let syncTimer = null;
+let syncAgain = false;
+const SYNC_BATCH = 150;
+const SYNC_BYTES = 1300000;
+const freshSync = () => ({ v: 0, after: '', pushed: {}, gone: [], keyPushed: false, blocked: '' });
+const uOf = (t) => Date.parse(t.updatedAt) || 0;
+
+async function loadSync() {
+  if (syncMeta) return syncMeta;
+  let saved = null;
+  try { saved = await store.getMeta('sync'); } catch { saved = null; }
+  const m = { ...freshSync(), ...(saved && typeof saved === 'object' ? saved : {}) };
+  if (!m.pushed || typeof m.pushed !== 'object' || Array.isArray(m.pushed)) m.pushed = {};
+  if (!Array.isArray(m.gone)) m.gone = [];
+  if (!Number.isSafeInteger(m.v) || m.v < 0) m.v = 0;
+  if (typeof m.after !== 'string') m.after = '';
+  syncMeta = m;
+  state.sync.blocked = m.blocked || '';
+  return m;
+}
+const saveSync = () => store.putMeta('sync', syncMeta).catch((err) => console.warn('Sync bookmark not saved', err));
+async function resetSync() {
+  syncMeta = freshSync();
+  state.sync = { ...state.sync, at: null, error: '', blocked: '' };
+  await saveSync();
+}
+
+function syncSoon(ms = 4000) {
+  if (!liveOn()) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => {
+    syncTimer = null;
+    syncNow().catch((err) => console.warn('Could not sync your list', err));
+  }, ms);
+}
+
+async function syncNow() {
+  if (!liveOn() || !state.ready || state.error) return;
+  if (syncing) { syncAgain = true; return syncing; }
+  clearTimeout(syncTimer);
+  syncTimer = null;
+  syncing = (async () => {
+    state.sync.busy = true;
+    try {
+      await loadSync();
+      if (syncMeta.blocked) return;
+      if (!Y.isKey(state.settings.syncKey) && !(await startSync())) return;
+      await pullList();
+      if (syncMeta.blocked) return;
+      await pushList();
+      state.sync.at = new Date().toISOString();
+      state.sync.error = '';
+    } catch (err) {
+      if (liveFailed(err)) return;
+      state.sync.error = err && err.code === 'no-route' ? 'The Rewinder server needs its update first.' : (err && err.message) || 'Could not sync your list.';
+    } finally {
+      state.sync.busy = false;
+      syncing = null;
+      requestRender();
+      publishSoon(1500);
+      if (syncAgain) { syncAgain = false; syncSoon(1000); }
+    }
+  })();
+  return syncing;
+}
+
+// A name from before 1.11 has no key yet: the first of your devices to get here makes it, if your list isn't on the
+// server yet. If it is, this device has to be added again with a code from one of yours that has the key.
+async function startSync() {
+  const { data } = await S.pull(liveBase(), liveAuth(), 0, '');
+  if (Array.isArray(data && data.items) && data.items.length) {
+    await blockSync('no-key');
+    return false;
+  }
+  state.settings.syncKey = Y.newKey();
+  await saveSettings();
+  await resetSync();
+  return true;
+}
+
+async function blockSync(why) {
+  syncMeta.blocked = why;
+  state.sync.blocked = why;
+  await saveSync();
+}
+
+async function pullList() {
+  const key = state.settings.syncKey;
+  for (let page = 0; page < 500; page++) {
+    const before = { v: syncMeta.v, after: syncMeta.after };
+    const { data } = await S.pull(liveBase(), liveAuth(), syncMeta.v, syncMeta.after);
+    const items = Array.isArray(data && data.items) ? data.items.slice(0, 500) : [];
+    let opened = 0;
+    let failed = 0;
+    for (const item of items) {
+      if (!item || typeof item.id !== 'string' || !/^[A-Za-z0-9_.:-]{1,80}$/.test(item.id) || !Number.isSafeInteger(item.v) || item.v < 0) continue;
+      if (typeof item.b === 'string' && item.b) {
+        let box = null;
+        try { box = await Y.unseal(key, item.id, item.b); } catch { box = null; }
+        if (item.id === Y.KEY_ITEM) {
+          // Your other devices lock with another key: nothing from here goes up, nothing from there comes in.
+          if (box !== Y.KEY_CHECK) { await blockSync('wrong-key'); return; }
+        } else if (box === null) {
+          failed++;
+        } else {
+          opened++;
+          try { await applyBox(item.id, Y.readBox(item.id, box)); } catch (err) { console.warn('Could not take', item.id, err); }
+        }
+      }
+      syncMeta.v = item.v;
+      syncMeta.after = item.id;
+    }
+    if (failed && !opened) { await blockSync('wrong-key'); return; }
+    await saveSync();
+    // More pages only while the bookmark moves (a server repeating itself is not followed forever).
+    if (!data || !data.more || !items.length || (syncMeta.v === before.v && syncMeta.after === before.after)) return;
+  }
+}
+
+async function applyBox(id, box) {
+  if (!box || !Y.syncable(id)) return false;
+  const i = state.titles.findIndex((t) => t.id === id);
+  const local = i >= 0 ? state.titles[i] : null;
+  if (box.gone) {
+    if (!local) { delete syncMeta.pushed[id]; return false; }
+    if (uOf(local) > box.u || saveTimers.has(id)) return false;
+    state.titles.splice(i, 1);
+    delete state.history[id];
+    await store.deleteTitle(id);
+    announce({ type: 'title', id });
+    delete syncMeta.pushed[id];
+    requestRender();
+    return true;
+  }
+  if (local) {
+    if (uOf(local) >= box.u || saveTimers.has(id)) return false;
+    // In place: whatever holds this title (an open page, a save on its way) holds the new version.
+    Object.assign(local, box.t);
+    await store.putTitle(local);
+  } else {
+    // New here. The same title added on this device before the two were joined: one title, under one id.
+    const twin = box.t.deletedAt ? null : state.titles.find((t) => !t.deletedAt && M.sameTitle(t, box.t));
+    if (twin) return joinTwins(twin, box);
+    state.titles.push(box.t);
+    await store.putTitle(box.t);
+  }
+  await store.mergeHistory(id, box.history);
+  delete state.history[id];
+  announce({ type: 'title', id });
+  syncMeta.pushed[id] = box.u;
+  requestRender();
+  return true;
+}
+
+async function joinTwins(twin, box) {
+  // Every device keeps the same one of the two ids, so they all end up with the same title.
+  const keep = twin.id < box.t.id ? twin.id : box.t.id;
+  const drop = keep === twin.id ? box.t.id : twin.id;
+  const oldId = twin.id;
+  Object.assign(twin, M.mergeTwins(twin, box.t, keep));
+  if (oldId !== keep) {
+    await store.moveHistory(oldId, keep);
+    await store.deleteTitle(oldId);
+    announce({ type: 'title', id: oldId });
+    delete syncMeta.pushed[oldId];
+  }
+  await store.putTitle(twin);
+  await store.mergeHistory(keep, box.history);
+  announce({ type: 'title', id: keep });
+  delete state.history[oldId];
+  delete state.history[keep];
+  syncMeta.gone.push({ id: drop, u: Date.now() });
+  if (state.route.name === 'title' && state.route.id === oldId && oldId !== keep) history.replaceState(null, '', '#/title/' + encodeURIComponent(keep));
+  state.route = parseRoute();
+  requestRender();
+  return true;
+}
+
+async function pushList() {
+  const key = state.settings.syncKey;
+  const queue = [];
+  if (!syncMeta.keyPushed) queue.push({ id: Y.KEY_ITEM, u: 1, value: Y.KEY_CHECK, done: () => { syncMeta.keyPushed = true; } });
+  for (const g of [...syncMeta.gone]) {
+    if (Y.syncable(g.id) && Number.isSafeInteger(g.u)) queue.push({ id: g.id, u: g.u, value: { gone: true, u: g.u }, done: () => { syncMeta.gone = syncMeta.gone.filter((x) => x !== g); } });
+  }
+  for (const t of state.titles) {
+    const u = uOf(t);
+    if (!Y.syncable(t.id) || saveTimers.has(t.id) || u <= 0 || u <= (syncMeta.pushed[t.id] || 0)) continue;
+    queue.push({ id: t.id, u, title: t, done: () => { syncMeta.pushed[t.id] = Math.max(syncMeta.pushed[t.id] || 0, u); } });
+  }
+  let batch = [];
+  let bytes = 0;
+  const send = async () => {
+    if (!batch.length) return;
+    await S.push(liveBase(), liveAuth(), batch.map((x) => ({ id: x.id, u: x.u, b: x.b })));
+    for (const x of batch) x.done();
+    await saveSync();
+    batch = [];
+    bytes = 0;
+  };
+  for (const q of queue) {
+    const value = q.title ? { u: q.u, t: q.title, h: (await store.historyFor(q.id, 30)).map((h) => ({ at: h.at, text: h.text })) } : q.value;
+    const b = await Y.seal(key, q.id, value);
+    // Too big for the server (thousands of episodes with long notes): it stays on this device.
+    if (b.length > 390000) { console.warn('Too big to sync', q.id); q.done(); continue; }
+    if (batch.length >= SYNC_BATCH || bytes + b.length > SYNC_BYTES) await send();
+    batch.push({ ...q, b });
+    bytes += b.length;
+  }
+  await send();
+}
+
+async function noteGone(id) {
+  if (!Y.syncable(id)) return;
+  await loadSync();
+  syncMeta.gone.push({ id, u: Date.now() });
+  delete syncMeta.pushed[id];
+  await saveSync();
+  syncSoon();
+}
+
+// Your devices: what each one is, when it was added and last seen.
+async function loadDevices() {
+  if (!liveOn()) return;
+  try {
+    const { data } = await S.devices(liveBase(), liveAuth());
+    const list = Array.isArray(data && data.devices) ? data.devices : [];
+    state.live.devices = list
+      .filter((d) => d && typeof d.id === 'string' && /^[A-Za-z0-9_-]{6,32}$/.test(d.id))
+      .slice(0, 20)
+      .map((d) => ({ id: d.id, label: typeof d.label === 'string' ? d.label.slice(0, 40) : '', at: typeof d.at === 'string' && !Number.isNaN(Date.parse(d.at)) ? d.at : null, seen: typeof d.seen === 'string' && !Number.isNaN(Date.parse(d.seen)) ? d.seen : null, me: d.me === true }));
+  } catch (err) {
+    if (liveFailed(err)) return;
+    state.live.devices = null;
+  }
+  requestRender();
+}
+
+async function removeDevice(id) {
+  const list = state.live.devices || [];
+  const d = list.find((x) => x.id === id);
+  if (!d || !liveOn()) return;
+  const name = state.settings.liveName;
+  const ok = await ask(d.me
+    ? { title: `Remove this device from ${name}?`, body: 'It stops syncing. Its list stays here, and your other devices keep everything.', yes: 'Remove this device', danger: true }
+    : { title: `Remove ${d.label || 'that device'}?`, body: `It stops syncing and leaves ${name}. What's already on it stays there.`, yes: 'Remove', danger: true });
+  if (!ok) return;
+  try {
+    await S.dropDevice(liveBase(), liveAuth(), d.me ? 'self' : id);
+  } catch (err) {
+    if (!liveFailed(err)) toast(err.message);
+    return;
+  }
+  if (d.me) {
+    forgetName();
+    state.friends = state.friends.filter((f) => !f.live);
+    await saveFriends();
+    render();
+    toast(`This device left ${name}. Its list stays here.`);
+    return;
+  }
+  toast(`${d.label || 'That device'} is out.`);
+  await loadDevices();
+}
+
 // Who asked, who you asked, and your friends' newest cards. At most once a minute unless asked.
 let refreshing = null;
 async function liveRefresh(force = false) {
@@ -2561,6 +2848,7 @@ async function liveRefresh(force = false) {
     } finally {
       refreshing = null;
       requestRender();
+      if (liveOn()) syncSoon(0);
     }
   })();
   return refreshing;
@@ -2576,15 +2864,17 @@ async function createName(form) {
     const base = liveBase();
     const { data } = await S.claim(base, name, invite, secret);
     if (!data || typeof data.name !== 'string' || !S.NAME.test(data.name)) throw new S.LiveError('The server sent back a name Rewinder cannot use.', 'bad-name');
-    Object.assign(state.settings, { liveName: data.name, liveSecret: secret, liveHost: base, liveSig: '', liveAt: null });
+    Object.assign(state.settings, { liveName: data.name, liveSecret: secret, liveHost: base, liveSig: '', liveAt: null, syncKey: Y.newKey() });
     if (!state.settings.cardName) state.settings.cardName = data.name;
     await saveSettings();
+    await resetSync();
   } catch (err) {
     toast(err.message);
     return;
   }
   render();
   toast(`You are ${state.settings.liveName} on Rewinder. Add your friends by their name in Friends.`, { action: { label: 'Friends', run: () => toggleFriends(true) }, timeout: 9000 });
+  loadDevices();
   await publishNow(true);
   await liveRefresh(true);
 }
@@ -2619,8 +2909,15 @@ async function answerRequest(what, name) {
   await liveRefresh(true);
 }
 
+// Another device for your name: a one-time code made here, with the key to your list inside.
 async function showMoveCode() {
   if (!liveOn()) return;
+  // A name from before 1.11 gets its key here, if it has none yet.
+  await syncNow();
+  if (!Y.isKey(state.settings.syncKey) || state.sync.blocked) {
+    toast(state.sync.blocked || !state.sync.error ? "This device can't open your list. Add it again from one of your other devices first." : state.sync.error);
+    return;
+  }
   let data;
   try {
     ({ data } = await S.transfer(liveBase(), liveAuth()));
@@ -2628,17 +2925,29 @@ async function showMoveCode() {
     if (!liveFailed(err)) toast(err.message);
     return;
   }
-  openDialog(V.moveCodeDialog(S.moveCode(liveBase(), state.settings.liveName, data.code), state.settings.liveName), '#move-code', 'dlg-move');
+  openDialog(V.moveCodeDialog(S.moveCode(liveBase(), state.settings.liveName, data.code, state.settings.syncKey), state.settings.liveName), '#move-code', 'dlg-move');
 }
 
+// This device joins your name: one list, the same on all your devices.
 async function moveHere(form) {
   const got = S.readMoveCode(form.elements.movecode ? form.elements.movecode.value : '');
-  if (!got) { toast('That is not a Rewinder name code. Copy the whole line from your other device.'); return; }
+  if (got && got.old) { toast('That code is from an older Rewinder. Make a new one: on your other device, Settings → Friends → Add another device.', { timeout: 9000 }); return; }
+  if (!got) { toast('That is not a Rewinder code. Copy the whole line from your other device.'); return; }
   // A code never switches servers: someone could send you one that points at theirs.
   if (got.base !== liveBase()) { toast('That code is for another Rewinder server. It was not used.'); return; }
-  if (liveOn()) { toast(`This device is already ${state.settings.liveName}.`); return; }
-  const ok = await ask({ title: `Become ${got.name} here?`, body: `Only use a code you made yourself, on your other device. ${got.name}'s friends will see this device's list.`, yes: 'Move it here' });
+  // A device that can't open its list (another key) may be added again; otherwise one name per device.
+  if (liveOn() && !state.sync.blocked) { toast(`This device is already ${state.settings.liveName}.`); return; }
+  const here = M.live(state.titles).length;
+  const ok = await ask({
+    title: `Add this device to ${got.name}?`,
+    body: `${got.name}'s list and the ${here} title${here === 1 ? '' : 's'} on this device become one list, the same on all ${got.name}'s devices. Only use a code you made yourself: whoever made it sees the whole list.`,
+    yes: 'Add this device'
+  });
   if (!ok) return;
+  if (liveOn()) {
+    try { await S.dropDevice(liveBase(), liveAuth(), 'self'); } catch (err) { console.warn('Could not remove the old device', err); }
+    forgetName();
+  }
   const secret = S.newSecret();
   let name;
   try {
@@ -2650,19 +2959,23 @@ async function moveHere(form) {
   }
   // The code said one name and the server another: someone made that code to fool you. It is not used.
   if (!name || !sameName(name, got.name)) { toast(`That code was not really for ${got.name}. It was not used.`, { timeout: 9000 }); return; }
-  Object.assign(state.settings, { liveName: name, liveSecret: secret, liveHost: got.base, liveSig: '', liveAt: null });
+  Object.assign(state.settings, { liveName: name, liveSecret: secret, liveHost: got.base, liveSig: '', liveAt: null, syncKey: got.key });
   if (!state.settings.cardName) state.settings.cardName = name;
   await saveSettings();
+  await resetSync();
   render();
-  toast(`${name} now lives on this device. Your other device no longer shares your card.`, { timeout: 9000 });
-  await publishNow(true);
+  loadDevices();
   await liveRefresh(true);
+  await syncNow();
+  if (state.sync.blocked) toast("Your list didn't open with that code. Make a new one on your other device.", { timeout: 9000 });
+  else if (state.sync.error) toast(state.sync.error);
+  else toast(`${name}: the same list on all your devices.`, { timeout: 7000 });
 }
 
 async function leaveServer() {
   if (!liveOn()) return;
   const name = state.settings.liveName;
-  const ok = await ask({ title: `Remove ${name} from the server?`, body: 'Your name, your card and your friends there are erased. The cards your friends sent you leave this device too. Your own list stays.', yes: 'Remove', danger: true });
+  const ok = await ask({ title: `Remove ${name} from the server?`, body: 'Your name, your card, your list on the server and your friends there are erased, on all your devices. The cards your friends sent you leave this device too. Each device keeps its own list.', yes: 'Remove', danger: true });
   if (!ok) return;
   try {
     await S.leave(liveBase(), liveAuth());
@@ -2670,8 +2983,7 @@ async function leaveServer() {
     if (!liveFailed(err)) toast(err.message);
     return;
   }
-  Object.assign(state.settings, { liveName: '', liveSecret: '', liveHost: '', liveSig: '', liveAt: null });
-  state.live = { incoming: [], outgoing: [], friends: [], checkedAt: 0, error: '' };
+  forgetName();
   state.friends = state.friends.filter((f) => !f.live);
   await saveFriends();
   await saveSettings();
@@ -2823,18 +3135,21 @@ async function importBackup(file) {
   }
   const have = M.live(state.titles).length;
   const incoming = data.titles.filter((t) => t && !t.deletedAt).length;
+  const synced = liveOn() && Y.isKey(state.settings.syncKey);
   if (state.titles.length) {
-    const ok = await ask({
-      title: 'Restore this backup?',
-      body: `Your current list (${have} titles) will be replaced by the backup (${incoming} titles${data.exportedAt ? ', from ' + M.fmtDate(data.exportedAt, true) : ''}). This can't be undone.`,
-      yes: 'Replace my list',
-      danger: true
-    });
+    const when = data.exportedAt ? ', from ' + M.fmtDate(data.exportedAt, true) : '';
+    const ok = await ask(synced
+      ? { title: 'Restore this backup?', body: `The backup's ${incoming} titles come back as they were${when}, on all your devices. Titles added since stay. This can't be undone.`, yes: 'Restore', danger: true }
+      : { title: 'Restore this backup?', body: `Your current list (${have} titles) will be replaced by the backup (${incoming} titles${when}). This can't be undone.`, yes: 'Replace my list', danger: true });
     if (!ok) return;
   }
   flushSaves();
   try {
-    await store.importAll(data);
+    await store.importAll(data, { bump: synced });
+    if (synced) {
+      await resetSync();
+      syncSoon(1000);
+    }
     announce({ type: 'all' });
     const fresh = await store.loadAll();
     state.titles = fresh.titles.map(M.normalizeTitle);
@@ -3097,6 +3412,7 @@ const actions = {
   'live-cancel': (el) => answerRequest('cancel', el.dataset.name),
   'live-move': () => showMoveCode(),
   'live-leave': () => leaveServer(),
+  'device-remove': (el) => removeDevice(el.dataset.id),
   'live-copy': async () => {
     const box = document.getElementById('move-code');
     if (!box) return;

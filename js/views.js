@@ -112,13 +112,13 @@ ${live ? `<div class="fp-files"><button type="button" class="btn btn-ghost btn-s
 </section>`;
 }
 
-// Your name, on your other device: one line to copy there. It works once.
+// Your name, on another of your devices: one line to copy there. It works once.
 export function moveCodeDialog(code, name) {
   return `<div class="dlg-form">
-<div class="dlg-head"><h2 class="dlg-title" id="dlg-move">Move ${esc(name)} to another device</h2></div>
-<p class="dlg-text">On your other device: Settings → Friends → <strong>Move my name here</strong>, then paste this code. ${esc(name)} then lives there, and this device stops sharing your card.</p>
+<div class="dlg-head"><h2 class="dlg-title" id="dlg-move">Add another device</h2></div>
+<p class="dlg-text">On your other device: Settings → Friends → <strong>Add this device</strong>, then paste this code. It becomes ${esc(name)} too, with the same list. This device stays ${esc(name)}.</p>
 <label class="sr" for="move-code">Your code</label><textarea id="move-code" class="input move-code" rows="3" readonly spellcheck="false">${esc(code)}</textarea>
-<p class="dlg-note">It works once, for 15 minutes. Anyone who has it before then can take your name: send it only to yourself.</p>
+<p class="dlg-note">It works once, for 15 minutes, and it opens your whole list: send it only to yourself.</p>
 <div class="dlg-actions"><button type="button" class="btn btn-ghost" data-action="dlg-close">Close</button><button type="button" class="btn btn-primary" data-action="live-copy">Copy the code</button></div>
 </div>`;
 }
@@ -144,7 +144,7 @@ ${state.settings.tvButton ? `<button type="button" class="icon-btn tv-btn" data-
 </header>`;
 }
 
-export const footer = () => `<footer class="foot"><span>Rewinder · v${M.APP_VERSION} · Your list stays on this device · <a href="#/guides">Guides</a> · <a href="#/tv-mode/top" data-action="tv-enter">TV mode</a></span><span>Data: <a href="https://www.themoviedb.org" target="_blank" rel="noopener">TMDB</a> · <a href="https://rawg.io" target="_blank" rel="noopener">RAWG</a> · Where to watch: JustWatch</span></footer>`;
+export const footer = () => `<footer class="foot"><span>Rewinder · v${M.APP_VERSION} · Your list stays yours · <a href="#/guides">Guides</a> · <a href="#/tv-mode/top" data-action="tv-enter">TV mode</a></span><span>Data: <a href="https://www.themoviedb.org" target="_blank" rel="noopener">TMDB</a> · <a href="https://rawg.io" target="_blank" rel="noopener">RAWG</a> · Where to watch: JustWatch</span></footer>`;
 
 /* ---------- cards and tables ---------- */
 
@@ -785,7 +785,26 @@ function installBlock(state) {
   return '<p class="set-text">To install Rewinder as an app, open your browser menu and choose <b>Install Rewinder</b> (Chrome, Edge, Brave). In Chrome you can also click the install icon at the right end of the address bar.</p>';
 }
 
-// Settings → Friends: your Rewinder name (made, moved, removed) and the server it lives on.
+// Your list on all your devices: how it's going.
+function syncLine(state) {
+  const y = state.sync || {};
+  if (y.blocked) return '<p class="set-text">This device can\'t open your list: your other devices lock it with another key. Remove this device below, then add it again with a code from one of them.</p>';
+  if (y.busy && !y.at) return '<p class="panel-sub">Syncing your list…</p>';
+  if (y.error) return `<p class="panel-sub">Your list didn't sync: ${esc(y.error)}</p>`;
+  if (y.at) return `<p class="panel-sub">Your list is the same on all your devices · synced ${esc(ago(y.at))}</p>`;
+  return '<p class="panel-sub">Your list syncs between your devices.</p>';
+}
+
+// Your devices: each one, when it was added and last seen; remove any of them (never the last one).
+function devicesList(state) {
+  const list = state.live.devices;
+  if (!list || !list.length) return '';
+  return `<ul class="trash devices" aria-label="Your devices">${list.map((d) => `<li data-key="dev-${esc(d.id)}"><span class="tt"><span class="tt-main">${esc(d.label || 'Device')}${d.me ? ' <span class="dev-me">· this device</span>' : ''}</span><span class="tt-sub">added ${esc(M.fmtDate(d.at))}${!d.me && d.seen ? ' · seen ' + esc(ago(d.seen)) : ''}</span></span>${list.length > 1 ? `<span class="actions"><button type="button" class="btn btn-ghost btn-sm btn-danger" data-action="device-remove" data-id="${esc(d.id)}">${d.me ? 'Remove this device' : 'Remove'}</button></span>` : ''}</li>`).join('')}</ul>`;
+}
+
+const ADD_HERE = `<details class="set-more"><summary>Add this device</summary><form class="live-here" data-form="live-here" autocomplete="off"><label class="field"><span class="label">Code from your other device</span><input id="live-code" name="movecode" class="input" placeholder="RW3.…" autocomplete="off" spellcheck="false" autocapitalize="off"></label><div class="actions"><button type="submit" class="btn btn-ghost">Add this device</button></div></form><span class="panel-sub">On your other device: Settings → Friends → Add another device. Both keep your name, with the same list.</span></details>`;
+
+// Settings → Friends: your Rewinder name (made, on your devices, removed) and the server it lives on.
 function liveSettings(state) {
   const s = state.settings;
   // With Sonny's server built in, there is no address to change (or to be talked into changing).
@@ -799,8 +818,11 @@ function liveSettings(state) {
   }
   if (liveReady(state)) {
     return `<p class="set-text">You are <strong>${esc(s.liveName)}</strong> on Rewinder. Friends add you by that name; once you both say yes, your cards stay up to date by themselves.</p>
-<p class="panel-sub">On the server: your name and your card (titles, scores, statuses, favorites, tags). Never your notes, dates or keys. Only the friends you accepted see your card; Sonny, who runs the server, can see what's stored there. A card that isn't updated for 5 months is erased.</p>
-<div class="actions"><button type="button" class="btn btn-ghost" data-action="live-move">${icon.upload}Move my name to another device</button><button type="button" class="btn btn-ghost btn-danger" data-action="live-leave">Remove my name and card</button></div>
+${syncLine(state)}
+${state.sync && state.sync.blocked ? ADD_HERE : ''}
+${devicesList(state)}
+<div class="actions"><button type="button" class="btn btn-ghost" data-action="live-move">${icon.upload}Add another device</button><button type="button" class="btn btn-ghost btn-danger" data-action="live-leave">Remove my name and card</button></div>
+<p class="panel-sub">On the server: your card for your friends (titles, scores, statuses, favorites, tags; Sonny, who runs the server, can see it), and your whole list for your devices, locked with a key that stays on them: the server only sees scrambled data. Never your API keys. What nobody updates for 5 months is erased.</p>
 ${server}`;
   }
   return `<p class="set-text">Add friends by their name, and your cards stay up to date by themselves. Pick your Rewinder name once, with the invite code Sonny gave you.</p>
@@ -809,8 +831,8 @@ ${server}`;
 <label class="field"><span class="label">Invite code</span><input id="live-invite" name="invite" class="input" maxlength="80" autocomplete="off" spellcheck="false" autocapitalize="off"></label>
 <div class="actions"><button type="submit" class="btn btn-primary">Create my name</button></div>
 </form>
-<p class="panel-sub">3 to 24 letters or numbers (. _ - inside). On the server: your name and your card (titles, scores, statuses, favorites, tags), never your notes, dates or keys. Only the friends you accept see your card; Sonny, who runs the server, can see what's stored there.</p>
-<details class="set-more"><summary>Move my name here</summary><form class="live-here" data-form="live-here" autocomplete="off"><label class="field"><span class="label">Code from your other device</span><input id="live-code" name="movecode" class="input" placeholder="RW2.…" autocomplete="off" spellcheck="false" autocapitalize="off"></label><div class="actions"><button type="submit" class="btn btn-ghost">Move it here</button></div></form><span class="panel-sub">Your other device: Settings → Friends → Move my name to another device.</span></details>
+<p class="panel-sub">3 to 24 letters or numbers (. _ - inside). On the server: your card for your friends (titles, scores, statuses, favorites, tags; Sonny, who runs the server, can see it), and your whole list for your devices, locked with a key that stays on them. Never your API keys.</p>
+${ADD_HERE}
 ${server}`;
 }
 
@@ -838,7 +860,7 @@ ${keyField('rawgKey', 'RAWG key', 'API key', 'https://rawg.io/apidocs', s.rawgKe
 </section>
 
 <section class="set-sec" aria-labelledby="set-backup"><h2 class="h2" id="set-backup"><span class="sq" aria-hidden="true"></span>Backup</h2>
-<p class="set-text">Your list lives only in this browser. Download a backup now and then, and keep it somewhere safe, like a cloud folder. A backup also moves your list to another computer.</p>
+<p class="set-text">${liveReady(state) && s.syncKey ? 'Your list is on your devices, and locked on the server. A backup is your own copy, outside all that: download one now and then, and keep it somewhere safe.' : 'Your list lives only in this browser. Download a backup now and then, and keep it somewhere safe, like a cloud folder. A backup also moves your list to another computer.'}</p>
 ${needsBackup(state) ? `<p class="reminder">${icon.download}<span>${s.lastBackupAt ? `Last backup ${esc(M.fmtDate(s.lastBackupAt, true))} · ${plural(s.changesSinceBackup || 0, 'change')} since.` : 'No backup yet.'} Time for one.</span><button type="button" class="link-btn" data-action="backup-later">Later</button></p>` : `<p class="panel-sub">${s.lastBackupAt ? `Last backup ${esc(M.fmtDate(s.lastBackupAt, true))} · ${plural(s.changesSinceBackup || 0, 'change')} since` : 'No backup yet'}</p>`}
 <div class="actions"><button type="button" class="btn btn-primary" data-action="export">${icon.download}Download backup</button><button type="button" class="btn btn-ghost" data-action="import">${icon.upload}Restore a backup</button><a class="btn btn-ghost" href="#/import">${icon.rows}Import a list</a></div>
 ${folderBlock(state)}
