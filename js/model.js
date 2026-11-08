@@ -1,6 +1,6 @@
 // Rewinder — data helpers. Pure functions: no DOM, no storage.
 
-export const APP_VERSION = '1.11.1';
+export const APP_VERSION = '1.12.0';
 
 export const KINDS = ['movie', 'tv', 'anime', 'game'];
 export const KIND_LABEL = { movie: 'Movie', tv: 'TV Show', anime: 'Anime', game: 'Game' };
@@ -201,6 +201,15 @@ export function progressLabel(t) {
 
 export const activity = (t) => t.lastActivity || t.updatedAt || t.createdAt || '';
 
+// The latest time a browser can read (year 275760).
+export const MAX_TIME = 8.64e15;
+// When a change happens: now, or just after the version it was made on, whichever is later. A device whose clock
+// runs behind still makes a change newer than what it changed: it gets sent, and it wins on your other devices.
+export function stamp(before) {
+  const prev = Math.min((typeof before === 'number' ? before : Date.parse(before)) || 0, MAX_TIME - 1);
+  return new Date(Math.max(Date.now(), prev + 1)).toISOString();
+}
+
 export function newTitle(fields = {}) {
   const now = new Date().toISOString();
   return {
@@ -227,7 +236,12 @@ export function makeSeason(n, count) {
 
 // Pictures only from the services the Scan uses.
 const isImage = (v) => typeof v === 'string' && /^https:\/\/(image\.tmdb\.org|media\.rawg\.io)\/[\w./%-]+$/.test(v);
-const strList = (v, max = 50) => (Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean).slice(0, max) : []);
+// Words in a list (genres, tags, platforms): so many, each one short.
+const strList = (v, max = 50) => (Array.isArray(v) ? v.slice(0, 500).map((x) => String(x).trim().slice(0, 120)).filter(Boolean).slice(0, max) : []);
+// One title holds at most this much: more than any real show, far less than what would choke a phone.
+const MAX_SEASONS = 150;
+const MAX_EPISODES = 20000;
+const MAX_NOTES = 1000000;
 
 // Keywords: lowercase, one space between words, each once.
 export const cleanKeyword = (v) => String(v || '').toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 60);
@@ -242,6 +256,13 @@ export function normalizeTitle(raw) {
   const r = raw && typeof raw === 'object' ? raw : {};
   const base = newTitle();
   const year = Number(r.year);
+  let episodesLeft = MAX_EPISODES;
+  let notesLeft = MAX_NOTES;
+  const note = (v) => {
+    const text = String(v || '').slice(0, Math.min(10000, notesLeft));
+    notesLeft -= text.length;
+    return text;
+  };
   return {
     ...base,
     id: typeof r.id === 'string' && r.id ? r.id.slice(0, 80) : base.id,
@@ -262,21 +283,25 @@ export function normalizeTitle(raw) {
     views: Array.isArray(r.views) ? r.views.map((v) => seenDate(v && v.date)).filter(Boolean).map((date) => ({ date })) : [],
     platforms: strList(r.platforms, 12),
     game: { story: markDate(r.game && r.game.story), full: markDate(r.game && r.game.full) },
-    seasons: Array.isArray(r.seasons) ? r.seasons.slice(0, 300).map((s, i) => ({
-      n: Number.isInteger(Number(s && s.n)) ? Number(s.n) : i + 1,
-      year: s && s.year ? String(s.year).slice(0, 4) : '',
-      score: s && typeof s.score === 'number' ? clampScore(s.score) : null,
-      notes: String((s && s.notes) || '').slice(0, 10000),
-      episodes: Array.isArray(s && s.episodes) ? s.episodes.slice(0, 5000).map((e, j) => ({
-        n: Number.isInteger(Number(e && e.n)) ? Number(e.n) : j + 1,
-        title: String((e && e.title) || '').slice(0, 300),
-        aired: dayOrNull(e && e.aired) || '',
-        tba: Boolean(e && e.tba),
-        watched: seenDate(e && e.watched),
-        score: e && typeof e.score === 'number' ? clampScore(e.score) : null,
-        note: String((e && e.note) || '').slice(0, 10000)
-      })) : []
-    })).sort((a, b) => a.n - b.n) : [],
+    seasons: Array.isArray(r.seasons) ? r.seasons.slice(0, MAX_SEASONS).map((s, i) => {
+      const eps = Array.isArray(s && s.episodes) ? s.episodes.slice(0, Math.min(5000, episodesLeft)) : [];
+      episodesLeft -= eps.length;
+      return {
+        n: Number.isInteger(Number(s && s.n)) ? Number(s.n) : i + 1,
+        year: s && s.year ? String(s.year).slice(0, 4) : '',
+        score: s && typeof s.score === 'number' ? clampScore(s.score) : null,
+        notes: note(s && s.notes),
+        episodes: eps.map((e, j) => ({
+          n: Number.isInteger(Number(e && e.n)) ? Number(e.n) : j + 1,
+          title: String((e && e.title) || '').slice(0, 200),
+          aired: dayOrNull(e && e.aired) || '',
+          tba: Boolean(e && e.tba),
+          watched: seenDate(e && e.watched),
+          score: e && typeof e.score === 'number' ? clampScore(e.score) : null,
+          note: note(e && e.note)
+        }))
+      };
+    }).sort((a, b) => a.n - b.n) : [],
     cast: Array.isArray(r.cast) ? r.cast.filter((c) => c && c.name).slice(0, 40).map((c) => ({ name: String(c.name).slice(0, 120), role: String(c.role || '').slice(0, 120) })) : [],
     // null: never asked (a title saved before Rewinder kept it); [] : asked, nobody listed.
     makers: Array.isArray(r.makers) ? r.makers.filter((x) => x && x.name).slice(0, 6).map((x) => ({ name: String(x.name).slice(0, 120), role: MAKER_ROLES.includes(x.role) ? x.role : 'Director' })) : null,
@@ -464,8 +489,9 @@ export function cleanProvider(name) {
 }
 
 // A store link only ever opens the store itself. A link anywhere else is dropped (the chip stays, without the link).
-const STORE_SITES = ['steampowered.com', 'gog.com', 'playstation.com', 'xbox.com', 'nintendo.com', 'epicgames.com', 'itch.io'];
-const STORE_HOSTS = ['apps.apple.com', 'itunes.apple.com', 'play.google.com', 'www.microsoft.com', 'apps.microsoft.com'];
+// itch.io only on itch.io itself: anyone gets a page of their own under it, with files to download.
+const STORE_SITES = ['steampowered.com', 'gog.com', 'playstation.com', 'xbox.com', 'nintendo.com', 'epicgames.com'];
+const STORE_HOSTS = ['apps.apple.com', 'itunes.apple.com', 'play.google.com', 'www.microsoft.com', 'apps.microsoft.com', 'itch.io'];
 export function storeLink(url) {
   if (typeof url !== 'string' || url.length > 500) return '';
   let u;
@@ -547,9 +573,39 @@ export const isHexColor = (v) => /^#[0-9a-f]{6}$/i.test(String(v || ''));
 const episodeHasData = (e) => Boolean(e.watched || typeof e.score === 'number' || e.note);
 const seasonHasData = (s) => Boolean(typeof s.score === 'number' || s.notes || s.episodes.some(episodeHasData));
 
+// What a Scan brought back (TMDB, RAWG, AniList), checked like everything else before it goes into a title:
+// whatever a service answers, a title only ever holds the right types, in the right sizes.
+export function cleanScan(raw) {
+  const s = raw && typeof raw === 'object' ? raw : {};
+  const n = normalizeTitle({ ...s, id: 'scan', providers: [] });
+  return {
+    source: s.source === 'rawg' ? 'rawg' : 'tmdb',
+    rawgId: n.rawgId, rawgSlug: n.rawgSlug, available: n.available,
+    tmdbId: n.tmdbId, tmdbType: n.tmdbType, kind: n.kind,
+    title: s.title ? n.title : '', titleQc: n.titleQc, year: n.year,
+    genres: n.genres, overview: n.overview, poster: n.poster, backdrop: n.backdrop,
+    cast: n.cast, makers: n.makers,
+    groupsAt: n.groupsAt, franchise: n.franchise, studios: n.studios, released: n.released,
+    keywordsAt: n.keywordsAt, keywords: n.keywords,
+    watchLink: n.watchLink,
+    providers: Array.isArray(s.providers) ? s.providers.filter((p) => p && p.name).slice(0, 30).map((p) => ({ name: String(p.name).slice(0, 100), url: typeof p.url === 'string' ? p.url : '' })) : [],
+    seasons: Array.isArray(s.seasons) ? n.seasons.map((x) => ({ n: x.n, year: x.year, episodes: x.episodes.map((e) => ({ n: e.n, title: e.title, aired: e.aired, tba: e.tba })) })) : null
+  };
+}
+
+// What a service filled in later (directors, studios, keywords): checked the same way, only those fields.
+export function cleanFields(t, got) {
+  const raw = got && typeof got === 'object' ? got : {};
+  const n = normalizeTitle({ ...t, ...raw });
+  const out = {};
+  for (const k of Object.keys(raw)) if (Object.hasOwn(n, k)) out[k] = n[k];
+  return out;
+}
+
 // Pours a Scan into a title. Your own things stay: status, scores, notes, checks, tags, friends, your platforms.
 // Seasons and episodes made by hand that TMDB doesn't know are dropped, unless you put something in them.
-export function mergeScan(t, s) {
+export function mergeScan(t, raw) {
+  const s = cleanScan(raw);
   if (s.source === 'rawg') {
     t.rawgId = s.rawgId;
     t.rawgSlug = s.rawgSlug || '';
@@ -574,11 +630,15 @@ export function mergeScan(t, s) {
   if (s.groupsAt) Object.assign(t, { franchise: s.franchise || null, studios: s.studios || [], released: s.released || t.released, groupsAt: s.groupsAt });
   if (s.keywordsAt) Object.assign(t, { keywords: keywordList(s.keywords), keywordsAt: s.keywordsAt });
   t.watchLink = s.watchLink || '';
-  mergeProviders(t, s);
-  return mergeSeasons(t, s);
+  providersInto(t, s);
+  return seasonsInto(t, s);
 }
 
-export function mergeProviders(t, s) {
+export const mergeProviders = (t, raw) => providersInto(t, cleanScan(raw));
+// Seasons and episodes only: what the daily new-season check refreshes.
+export const mergeSeasons = (t, raw) => seasonsInto(t, cleanScan(raw));
+
+function providersInto(t, s) {
   const source = s.source === 'rawg' ? 'rawg' : 'tmdb';
   const scanned = s.providers.map((p) => ({ name: p.name, source, url: source === 'rawg' ? storeLink(p.url) : '' }));
   const mine = t.providers.filter((p) => p.source === 'manual' && !scanned.some((n) => n.name.toLowerCase() === p.name.toLowerCase()));
@@ -586,8 +646,7 @@ export function mergeProviders(t, s) {
   if (source === 'tmdb') t.watchLink = s.watchLink || '';
 }
 
-// Seasons and episodes only: what the daily new-season check refreshes.
-export function mergeSeasons(t, s) {
+function seasonsInto(t, s) {
   const counts = { seasons: 0, episodes: 0 };
   if (!s.seasons) return counts;
   for (const ss of s.seasons) {
@@ -708,33 +767,69 @@ export function mergeTwins(a, b, id) {
 }
 
 // Your card: scores, statuses, favorites and tags. Never notes, dates, history or recommendations.
-export function makeCard(titles, { id, name }) {
-  return {
-    app: 'rewinder',
-    kind: 'card',
-    format: 1,
-    id,
-    name,
-    at: new Date().toISOString(),
-    // Always in the same order: the same list makes the same card (and the same fingerprint) after every reload.
-    titles: live(titles).map((t) => {
-      const score = effectiveScore(t);
-      return {
-        ...refOf(t),
-        score: typeof score === 'number' ? Math.round(score * 10) / 10 : null,
-        status: t.status,
-        fav: Boolean(t.fav),
-        tags: t.tags || [],
-        poster: t.poster || ''
-      };
-    }).sort((a, b) => cardOrder(a).localeCompare(cardOrder(b)))
-  };
-}
+// Always in the same order: the same list makes the same card (and the same fingerprint) after every reload.
 const cardOrder = (x) => `${x.kind}|${x.tmdb || ''}|${x.rawg || ''}|${x.title}|${x.year || ''}`;
+const cardRows = (titles) => live(titles).map((t) => {
+  const score = effectiveScore(t);
+  return {
+    ...refOf(t),
+    score: typeof score === 'number' ? Math.round(score * 10) / 10 : null,
+    status: t.status,
+    fav: Boolean(t.fav),
+    tags: t.tags || [],
+    poster: t.poster || ''
+  };
+}).sort((a, b) => cardOrder(a).localeCompare(cardOrder(b)));
+// On the card, what is empty is left out (a friend's Rewinder fills it back in): a quarter smaller.
+function cardEntry(x) {
+  const out = { kind: x.kind, title: x.title, status: x.status };
+  if (x.year) out.year = x.year;
+  if (x.tmdb) out.tmdb = x.tmdb;
+  if (x.rawg) out.rawg = x.rawg;
+  if (typeof x.score === 'number') out.score = x.score;
+  if (x.fav) out.fav = true;
+  const tags = x.tags.slice(0, 12).map((g) => String(g).slice(0, 60));
+  if (tags.length) out.tags = tags;
+  if (x.poster) out.poster = x.poster;
+  return out;
+}
+export function makeCard(titles, { id, name }) {
+  return { app: 'rewinder', kind: 'card', format: 1, id, name, at: new Date().toISOString(), titles: cardRows(titles).map(cardEntry) };
+}
+
+// A card for the server, which takes 1 MB at most (and a friend's Rewinder reads 5,000 titles): a very big list
+// makes a smaller card, never a refused one. First the titles a friend can't compare go (watchlist, no score),
+// then posters, from the titles a friend looks at least (friends see the drawn art there), then the last titles.
+export const CARD_BYTES = 900000;
+const sizeOf = (card) => new TextEncoder().encode(JSON.stringify(card)).length;
+const weight = (x) => (x.fav ? 100 : 0) + (typeof x.score === 'number' ? x.score : 0);
+export function fitCard(card, max = CARD_BYTES) {
+  if (card.titles.length <= 5000 && sizeOf(card) <= max) return card;
+  const fits = (list) => sizeOf({ ...card, titles: list }) <= max;
+  const order = (list) => list.sort((a, b) => cardOrder(a).localeCompare(cardOrder(b)));
+  const seen = card.titles.filter((x) => isSeen(x.status, x.score));
+  const unseen = card.titles.filter((x) => !isSeen(x.status, x.score));
+  const all = order([...seen, ...unseen].slice(0, 5000));
+  if (fits(all)) return { ...card, titles: all };
+  let titles = order(seen.slice(0, 5000));
+  let excess = sizeOf({ ...card, titles }) - max;
+  if (excess > 0) {
+    const least = titles.map((x, i) => i).sort((a, b) => weight(titles[a]) - weight(titles[b]));
+    for (const i of least) {
+      if (excess <= 0) break;
+      const { poster, ...rest } = titles[i];
+      if (!poster) continue;
+      titles[i] = rest;
+      excess -= poster.length + 12;
+    }
+  }
+  while (titles.length && !fits(titles)) titles = titles.slice(0, Math.floor(titles.length * 0.95));
+  return { ...card, titles };
+}
 
 // A short fingerprint of what your card says: it changes when a title, score, status, favorite or tag does.
 export function cardSignature(titles, name) {
-  const text = JSON.stringify([name || '', makeCard(titles, { id: '', name: '' }).titles]);
+  const text = JSON.stringify([name || '', cardRows(titles)]);
   let h = 2166136261;
   for (let i = 0; i < text.length; i++) {
     h ^= text.charCodeAt(i);

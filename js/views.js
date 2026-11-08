@@ -118,7 +118,7 @@ export function moveCodeDialog(code, name) {
 <div class="dlg-head"><h2 class="dlg-title" id="dlg-move">Add another device</h2></div>
 <p class="dlg-text">On your other device: Settings → Friends → <strong>Add this device</strong>, then paste this code. It becomes ${esc(name)} too, with the same list. This device stays ${esc(name)}.</p>
 <label class="sr" for="move-code">Your code</label><textarea id="move-code" class="input move-code" rows="3" readonly spellcheck="false">${esc(code)}</textarea>
-<p class="dlg-note">It works once, for 15 minutes, and it opens your whole list: send it only to yourself.</p>
+<p class="dlg-note">It works once, for 15 minutes, and it opens your whole list. Send it only to yourself, never to someone who asks for it, even a friend.</p>
 <div class="dlg-actions"><button type="button" class="btn btn-ghost" data-action="dlg-close">Close</button><button type="button" class="btn btn-primary" data-action="live-copy">Copy the code</button></div>
 </div>`;
 }
@@ -786,7 +786,7 @@ function installBlock(state) {
 }
 
 // Your list stopped syncing: it can't open (another key), or it has failed for 5 minutes.
-const syncTrouble = (state) => Boolean(state.sync && liveReady(state) && (state.sync.blocked || (state.sync.error && state.sync.failSince && Date.now() - state.sync.failSince > 5 * 60e3)));
+const syncTrouble = (state) => Boolean(state.sync && liveReady(state) && ((state.live && state.live.out) || state.sync.blocked || (state.sync.error && state.sync.failSince && Date.now() - state.sync.failSince > 5 * 60e3)));
 
 // Your list on all your devices: how it's going.
 function syncLine(state) {
@@ -820,13 +820,22 @@ function liveSettings(state) {
   if (s.liveName && s.liveSecret && s.liveHost && s.liveHost !== state.liveServer) {
     return `<p class="set-text">Your name <strong>${esc(s.liveName)}</strong> belongs to another server (${esc(s.liveHost)}). Rewinder never sends it anywhere else: set that address back to use it.</p>${server}`;
   }
+  // The server doesn't know this device right now: nothing was forgotten, and forgetting is a choice.
+  if (liveReady(state) && state.live.out) {
+    const old = state.live.out === 'old';
+    return `<p class="set-text">${old ? `The Rewinder server needs its update. Nothing is lost: this device picks up again as <strong>${esc(s.liveName)}</strong> once it's done.` : `The server doesn't know this device as <strong>${esc(s.liveName)}</strong> right now. It was removed from your devices, or your name was, or the server is in trouble.`}</p>
+<p class="panel-sub">Your list and the key that opens it stay here. Rewinder checks again every 10 minutes.</p>
+<div class="actions"><button type="button" class="btn btn-ghost" data-action="live-retry">Try again</button><button type="button" class="btn btn-ghost btn-danger" data-action="live-forget">Forget ${esc(s.liveName)} here</button></div>
+${old ? '' : ADD_HERE}
+${server}`;
+  }
   if (liveReady(state)) {
     return `<p class="set-text">You are <strong>${esc(s.liveName)}</strong> on Rewinder. Friends add you by that name; once you both say yes, your cards stay up to date by themselves.</p>
 ${syncLine(state)}
 ${state.sync && state.sync.blocked ? ADD_HERE : ''}
 ${devicesList(state)}
 <div class="actions"><button type="button" class="btn btn-ghost" data-action="live-move">${icon.upload}Add another device</button><button type="button" class="btn btn-ghost btn-danger" data-action="live-leave">Remove my name and card</button></div>
-<p class="panel-sub">On the server: your card for your friends (titles, scores, statuses, favorites, tags; Sonny, who runs the server, can see it), and your whole list for your devices, locked with a key that stays on them: the server only sees scrambled data. Never your API keys. What nobody updates for 5 months is erased.</p>
+<p class="panel-sub">On the server: your card for your friends (titles, scores, statuses, favorites, tags; Sonny, who runs the server, can see it), and your whole list for your devices, locked with a key that stays on them: the server only sees scrambled data. Never your API keys. A device unused for 5 months leaves your name; a name with no device left is erased, with its card and its list.</p>
 ${server}`;
   }
   return `<p class="set-text">Add friends by their name, and your cards stay up to date by themselves. Pick your Rewinder name once, with the invite code Sonny gave you.</p>
@@ -851,7 +860,7 @@ export function settingsView(state) {
 
 <section class="set-sec" aria-labelledby="set-look"><h2 class="h2" id="set-look"><span class="sq" aria-hidden="true"></span>Look</h2>
 <div class="set-row"><span class="label" id="lbl-accent">Color</span>
-<div class="swatches" role="group" aria-labelledby="lbl-accent">${M.PRESETS.map((p) => `<button type="button" class="swatch" data-action="accent" data-color="${p.color}" aria-pressed="${p.color.toLowerCase() === String(s.accent).toLowerCase()}" style="--sw:${p.color}"><span class="sw-dot" aria-hidden="true"></span>${p.name}</button>`).join('')}<label class="swatch swatch-custom${isPreset ? '' : ' on'}" style="--sw:${isPreset ? '#5A6360' : esc(s.accent)}"><span class="sw-dot" aria-hidden="true"></span>Custom<input type="color" id="accent-custom" value="${esc(s.accent)}" data-setting="accent" aria-label="Custom color"></label></div>
+<div class="swatches" role="group" aria-labelledby="lbl-accent">${M.PRESETS.map((p) => `<button type="button" class="swatch" data-action="accent" data-color="${p.color}" aria-pressed="${p.color.toLowerCase() === String(s.accent).toLowerCase()}" style="--sw:${p.color}"><span class="sw-dot" aria-hidden="true"></span>${p.name}</button>`).join('')}<label class="swatch swatch-custom${isPreset ? '' : ' on'}" style="--sw:${isPreset || !M.isHexColor(s.accent) ? '#5A6360' : s.accent}"><span class="sw-dot" aria-hidden="true"></span>Custom<input type="color" id="accent-custom" value="${esc(s.accent)}" data-setting="accent" aria-label="Custom color"></label></div>
 </div>
 <div class="set-row"><label class="switch"><input type="checkbox" role="switch" id="set-scan" data-setting="scanlines"${s.scanlines ? ' checked' : ''}><span class="switch-ui" aria-hidden="true"></span>Scanlines</label><span class="panel-sub">The faint screen lines on banners.</span></div>
 </section>
@@ -1452,7 +1461,7 @@ function guideStep(state) {
     return `<span class="eyebrow">// 1 · Your color</span>
 <h1 class="display display-md">Pick your color</h1>
 <p class="lead">It paints the whole app. You can change it anytime in Settings.</p>
-<div class="guide-swatches" role="group" aria-label="Color">${M.PRESETS.map((p) => `<button type="button" class="g-swatch" data-action="accent" data-color="${p.color}" aria-pressed="${p.color.toLowerCase() === String(state.settings.accent).toLowerCase()}" style="--sw:${p.color}"><span class="g-sw-dot" aria-hidden="true"></span>${p.name}</button>`).join('')}<label class="g-swatch swatch-custom${isPreset ? '' : ' on'}" style="--sw:${isPreset ? '#5A6360' : esc(state.settings.accent)}"><span class="g-sw-dot" aria-hidden="true"></span>Custom<input type="color" id="g-accent" value="${esc(state.settings.accent)}" data-setting="accent" aria-label="Custom color"></label></div>
+<div class="guide-swatches" role="group" aria-label="Color">${M.PRESETS.map((p) => `<button type="button" class="g-swatch" data-action="accent" data-color="${p.color}" aria-pressed="${p.color.toLowerCase() === String(state.settings.accent).toLowerCase()}" style="--sw:${p.color}"><span class="g-sw-dot" aria-hidden="true"></span>${p.name}</button>`).join('')}<label class="g-swatch swatch-custom${isPreset ? '' : ' on'}" style="--sw:${isPreset || !M.isHexColor(state.settings.accent) ? '#5A6360' : state.settings.accent}"><span class="g-sw-dot" aria-hidden="true"></span>Custom<input type="color" id="g-accent" value="${esc(state.settings.accent)}" data-setting="accent" aria-label="Custom color"></label></div>
 ${guideNav(state, 'Next')}`;
   }
   if (at === 2) {

@@ -1,7 +1,7 @@
 // Rewinder — your list on all your devices. Each title travels through your Rewinder server locked with a key
 // that stays on your devices (AES-GCM, 256 bits): the server only ever holds scrambled bytes, a title id and
 // when it changed. The key goes from one of your devices to another inside the one-time code, never to the server.
-import { normalizeTitle } from './model.js';
+import { normalizeTitle, MAX_TIME } from './model.js';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -73,7 +73,7 @@ export async function unseal(keyText, id, text) {
 // What a sealed title holds once opened: the title (checked like a backup), its recent history, and when it
 // changed, from inside the box (the server's own copy of that time is only used to order the boxes).
 export function readBox(id, data) {
-  if (!data || typeof data !== 'object' || !Number.isSafeInteger(data.u) || data.u <= 0) return null;
+  if (!data || typeof data !== 'object' || !Number.isSafeInteger(data.u) || data.u <= 0 || data.u > MAX_TIME) return null;
   if (data.gone === true) return { gone: true, u: data.u };
   if (!data.t || typeof data.t !== 'object') return null;
   const t = normalizeTitle(data.t);

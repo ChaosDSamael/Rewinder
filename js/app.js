@@ -23,6 +23,8 @@ const toastBox = document.getElementById('toasts');
 const importInput = document.getElementById('import-file');
 
 const listDefaults = () => ({ cat: 'all', platform: '', status: '', fav: false, q: '', sort: 'recent' });
+// Keyed by title id: no built-in keys, so a title whose id is "constructor" or "__proto__" is just a title.
+const idMap = (from) => Object.assign(Object.create(null), from || {});
 
 const state = {
   ready: false,
@@ -30,12 +32,13 @@ const state = {
   titles: [],
   settings: { ...M.DEFAULT_SETTINGS },
   // Friends by name: requests waiting, friends on the server, the last check.
-  live: { incoming: [], outgoing: [], friends: [], checkedAt: 0, error: '', devices: null },
+  // out: the server doesn't know this device right now ('out'), or it is an old server ('old').
+  live: { incoming: [], outgoing: [], friends: [], checkedAt: 0, error: '', devices: null, out: '' },
   // Your list on all your devices: syncing now, the last time it worked, what went wrong.
   sync: { busy: false, at: null, error: '', blocked: '', failSince: null, tooBig: 0 },
   route: { name: 'home' },
   current: null,
-  history: {},
+  history: idMap(),
   canInstall: false,
   standalone: false,
   persisted: false,
@@ -52,7 +55,7 @@ const state = {
     openSeasons: new Set(),
     openEp: null,
     addSeasonOpen: false,
-    homeScore: {},
+    homeScore: idMap(),
     focusAfter: null,
     dateEdit: null,
     friendsOpen: false,
@@ -293,7 +296,7 @@ async function syncFromOtherWindow(msg) {
     const fresh = await store.loadAll();
     state.titles = fresh.titles.map(M.normalizeTitle);
     state.settings = tidyServer({ ...M.DEFAULT_SETTINGS, ...fresh.settings });
-    state.history = {};
+    state.history = idMap();
     applyTheme();
   } else {
     return;
@@ -304,9 +307,8 @@ async function syncFromOtherWindow(msg) {
 if (channel) channel.onmessage = (e) => { syncFromOtherWindow(e.data).catch((err) => console.warn('Sync failed', err)); };
 
 function touch(t) {
-  const now = new Date().toISOString();
-  t.updatedAt = now;
-  t.lastActivity = now;
+  t.updatedAt = M.stamp(t.updatedAt);
+  t.lastActivity = t.updatedAt;
 }
 
 async function persist(t) {
@@ -858,7 +860,7 @@ async function purgeTitle(id) {
   try {
     await store.deleteTitle(id);
     announce({ type: 'title', id });
-    await noteGone(id);
+    await noteGone(id, t.updatedAt);
     countChange();
   } catch (err) {
     console.error(err);
@@ -874,7 +876,7 @@ async function purgeExpired() {
   for (const t of expired) {
     try {
       await store.deleteTitle(t.id);
-      await noteGone(t.id);
+      await noteGone(t.id, t.updatedAt);
     } catch (err) { console.warn(err); }
   }
 }
@@ -2065,7 +2067,7 @@ async function fillMakers() {
     for (const t of job.list) {
       if (t.makers !== null || t.deletedAt) continue;
       try {
-        t.makers = await job.ask(t, job.key);
+        Object.assign(t, M.cleanFields(t, { makers: await job.ask(t, job.key) }));
       } catch (err) {
         if (!err || err.code !== 'notfound') break;
         t.makers = [];
@@ -2121,7 +2123,7 @@ async function fillGroups() {
       for (const t of job.list) {
         if (!job.need(t) || t.deletedAt) { state.ui.groupFill.done++; continue; }
         try {
-          Object.assign(t, await job.ask(t, job.key));
+          Object.assign(t, M.cleanFields(t, await job.ask(t, job.key)));
         } catch (err) {
           if (!err || err.code !== 'notfound') break;
           Object.assign(t, job.none());
@@ -2469,28 +2471,47 @@ const sameName = (a, b) => String(a || '').toLowerCase() === String(b || '').toL
 // A live friend's card is filed under their Rewinder name, never under the id the card itself claims.
 const liveId = (name) => 'live-' + String(name).toLowerCase();
 
-// The server no longer knows this device: it was removed from your devices, or the name was removed.
+// The server doesn't know this device right now: it was removed from your devices, the name was removed, or the
+// server itself is in trouble (an old version put back, its data lost). Nothing is forgotten on its own: the name,
+// its secret and the key to your list stay here, and Rewinder asks again now and then. Forgetting is your call.
+const OUT_RETRY = 10 * 60e3;
 function liveFailed(err) {
   if (!err || err.status !== 401) return false;
-  const name = state.settings.liveName;
-  forgetName();
-  render();
-  toast(`${name} is no longer on this device: it was removed from your devices, or the name was removed. Your list stays here.`, { timeout: 0 });
+  const old = !err.server;
+  if (!state.live.out) {
+    toast(old ? 'The Rewinder server needs its update. Nothing is lost: this device picks up again once it is done.'
+      : `The server doesn't know this device as ${state.settings.liveName} right now. Your list stays here.`, { action: { label: 'Settings', run: () => go('#/settings') }, timeout: 12000 });
+  }
+  state.live.out = old ? 'old' : 'out';
+  state.live.checkedAt = Date.now();
+  state.live.error = old ? 'The Rewinder server needs its update.' : "The server doesn't know this device right now.";
+  requestRender();
   return true;
 }
 
 // This device lets go of the name and the key to your list. Its own list stays.
 function forgetName() {
   Object.assign(state.settings, { liveName: '', liveSecret: '', liveHost: '', liveSig: '', liveAt: null, syncKey: '' });
-  state.live = { incoming: [], outgoing: [], friends: [], checkedAt: 0, error: '', devices: null };
+  state.live = { incoming: [], outgoing: [], friends: [], checkedAt: 0, error: '', devices: null, out: '' };
   saveSettings();
   resetSync().catch((err) => console.warn(err));
 }
 
+async function forgetHere() {
+  const name = state.settings.liveName;
+  const ok = await ask({ title: `Forget ${name} on this device?`, body: `This device stops being ${name} and lets go of the key to your list. Its own list stays here. To sync again, add it back with a code from one of your other devices.`, yes: 'Forget it here', danger: true });
+  if (!ok) return;
+  forgetName();
+  state.friends = state.friends.filter((f) => !f.live);
+  await saveFriends();
+  render();
+  toast(`This device let go of ${name}. Its list stays here.`);
+}
+
+const cardName = () => (state.settings.cardName || '').trim() || state.settings.liveName;
 function liveCard() {
   if (!state.settings.cardId) state.settings.cardId = 'card-' + M.uid();
-  const name = (state.settings.cardName || '').trim() || state.settings.liveName;
-  return { card: M.makeCard(state.titles, { id: state.settings.cardId, name }), sig: M.cardSignature(state.titles, name) };
+  return M.fitCard(M.makeCard(state.titles, { id: state.settings.cardId, name: cardName() }));
 }
 
 // Your card goes to the server a little after your last change, and once a month anyway (the server forgets a
@@ -2498,33 +2519,42 @@ function liveCard() {
 let publishTimer = null;
 let publishing = null;
 let lastPut = 0;
+// After a failure, the next try waits its turn (30 s up to 10 min), whatever asks for it sooner.
+let publishAfter = 0;
+// A card the server refused as too big is not sent again until it changes.
+let refusedSig = '';
 const PUT_GAP = 11000;
 function publishSoon(ms = 20000) {
-  if (!liveOn()) return;
+  if (!liveOn() || state.live.out) return;
   clearTimeout(publishTimer);
   publishTimer = setTimeout(() => {
     publishTimer = null;
     publishNow().catch((err) => console.warn('Could not send your card', err));
-  }, ms);
+  }, Math.max(ms, publishAfter - Date.now()));
 }
 
 async function publishNow(force = false) {
-  if (!liveOn() || !state.ready) return;
+  if (!liveOn() || !state.ready || state.live.out) return;
   if (publishing) return publishing;
   clearTimeout(publishTimer);
   publishTimer = null;
   flushSaves();
-  const { card, sig } = liveCard();
+  const sig = M.cardSignature(state.titles, cardName());
   const month = 30 * 24 * 3600e3;
   if (!force && sig === state.settings.liveSig && state.settings.liveAt && Date.now() - Date.parse(state.settings.liveAt) < month) return;
+  if (!force && sig === refusedSig) return;
   // The server takes one card every 10 seconds: a change right after the last one waits its turn.
-  const wait = lastPut + PUT_GAP - Date.now();
+  const wait = Math.max(lastPut + PUT_GAP, publishAfter) - Date.now();
   if (wait > 0) { publishSoon(wait); return; }
+  const card = liveCard();
   publishing = (async () => {
     try {
       const { data } = await S.publish(liveBase(), liveAuth(), card);
       lastPut = Date.now();
       publishFails = 0;
+      publishAfter = 0;
+      refusedSig = '';
+      state.live.error = '';
       state.settings.liveSig = sig;
       state.settings.liveAt = (data && data.at) || new Date().toISOString();
       await saveSettings();
@@ -2533,8 +2563,12 @@ async function publishNow(force = false) {
       if (err && err.code === 'slow-down') publishSoon(12000);
       else if (!liveFailed(err)) {
         state.live.error = err.message;
-        publishFails++;
-        publishSoon(retryDelay(publishFails));
+        if (err.status === 413) refusedSig = sig;
+        else {
+          publishFails++;
+          publishAfter = Date.now() + retryDelay(publishFails);
+          publishSoon(0);
+        }
         requestRender();
       }
     } finally {
@@ -2559,63 +2593,77 @@ const SYNC_BYTES = 300000;
 const retryDelay = (n) => Math.min(600000, 30000 * 2 ** Math.max(0, Math.min(n - 1, 5)));
 let syncFails = 0;
 let publishFails = 0;
-const freshSync = () => ({ v: 0, after: '', pushed: {}, gone: [], keyPushed: false, blocked: '' });
+// After a failure, the next sync waits its turn, whatever asks for one sooner (your changes are kept here).
+let syncAfter = 0;
+const freshSync = () => ({ v: 0, after: '', pushed: idMap(), gone: [], keyPushed: false, blocked: '', resetAt: 0 });
 const uOf = (t) => Date.parse(t.updatedAt) || 0;
 
+// Rewinder open in two windows: one syncs at a time, and each starts from the bookmark as saved (the other one
+// may have moved it, or noted a title deleted forever).
+const withSync = (fn) => (navigator.locks && navigator.locks.request ? navigator.locks.request('rewinder-sync', fn) : fn());
+
 async function loadSync() {
-  if (syncMeta) return syncMeta;
   let saved = null;
   try { saved = await store.getMeta('sync'); } catch { saved = null; }
   const m = { ...freshSync(), ...(saved && typeof saved === 'object' ? saved : {}) };
-  if (!m.pushed || typeof m.pushed !== 'object' || Array.isArray(m.pushed)) m.pushed = {};
+  m.pushed = idMap(m.pushed && typeof m.pushed === 'object' && !Array.isArray(m.pushed) ? m.pushed : {});
   if (!Array.isArray(m.gone)) m.gone = [];
   if (!Number.isSafeInteger(m.v) || m.v < 0) m.v = 0;
   if (typeof m.after !== 'string') m.after = '';
+  if (!Number.isFinite(m.resetAt)) m.resetAt = 0;
   syncMeta = m;
   state.sync.blocked = m.blocked || '';
   return m;
 }
-const saveSync = () => store.putMeta('sync', syncMeta).catch((err) => console.warn('Sync bookmark not saved', err));
-async function resetSync() {
+const saveSync = () => store.putMeta('sync', { ...syncMeta, pushed: { ...syncMeta.pushed } }).catch((err) => console.warn('Sync bookmark not saved', err));
+async function resetSyncHere() {
   syncMeta = freshSync();
   state.sync = { ...state.sync, at: null, error: '', blocked: '', failSince: null, tooBig: 0 };
+  syncAfter = 0;
   await saveSync();
 }
+const resetSync = () => withSync(resetSyncHere);
 
 function syncSoon(ms = 4000) {
-  if (!liveOn()) return;
+  if (!liveOn() || state.live.out) return;
   clearTimeout(syncTimer);
   syncTimer = setTimeout(() => {
     syncTimer = null;
     syncNow().catch((err) => console.warn('Could not sync your list', err));
-  }, ms);
+  }, Math.max(ms, syncAfter - Date.now()));
 }
 
 async function syncNow() {
-  if (!liveOn() || !state.ready || state.error) return;
+  if (!liveOn() || !state.ready || state.error || state.live.out) return;
   if (syncing) { syncAgain = true; return syncing; }
   clearTimeout(syncTimer);
   syncTimer = null;
   syncing = (async () => {
     state.sync.busy = true;
     try {
-      await loadSync();
-      if (syncMeta.blocked) return;
-      if (!Y.isKey(state.settings.syncKey) && !(await startSync())) return;
-      await pullList();
-      if (syncMeta.blocked) return;
-      await pushList();
+      const done = await withSync(async () => {
+        await loadSync();
+        if (syncMeta.blocked) return false;
+        if (!Y.isKey(state.settings.syncKey) && !(await startSync())) return false;
+        await pullList();
+        if (syncMeta.blocked) return false;
+        await pushList();
+        return true;
+      });
+      if (!done) return;
       state.sync.at = new Date().toISOString();
       state.sync.error = '';
       state.sync.failSince = null;
       syncFails = 0;
+      syncAfter = 0;
     } catch (err) {
       if (liveFailed(err)) return;
       state.sync.error = err && err.code === 'no-route' ? 'The Rewinder server needs its update first.' : (err && err.message) || 'Could not sync your list.';
       state.sync.failSince = state.sync.failSince || Date.now();
       syncFails++;
       syncAgain = false;
-      syncSoon(retryDelay(syncFails));
+      syncAfter = Date.now() + retryDelay(syncFails);
+      syncSoon(0);
     } finally {
       state.sync.busy = false;
       syncing = null;
@@ -2637,7 +2685,7 @@ async function startSync() {
   }
   state.settings.syncKey = Y.newKey();
   await saveSettings();
-  await resetSync();
+  await resetSyncHere();
   return true;
 }
 
@@ -2652,6 +2700,13 @@ async function pullList() {
   for (let page = 0; page < 500; page++) {
     const before = { v: syncMeta.v, after: syncMeta.after };
     const { data } = await S.pull(liveBase(), liveAuth(), syncMeta.v, syncMeta.after);
+    // The server's count is behind this bookmark: it went back in time (restored from a copy). Everything is read
+    // again, and everything here goes back up (once in a while at most: a server can't make that happen all day).
+    if (data && Number.isSafeInteger(data.n) && data.n < syncMeta.v && Date.now() - syncMeta.resetAt > 6 * 3600e3) {
+      Object.assign(syncMeta, { v: 0, after: '', pushed: idMap(), keyPushed: false, resetAt: Date.now() });
+      await saveSync();
+      continue;
+    }
     const items = Array.isArray(data && data.items) ? data.items.slice(0, 500) : [];
     let opened = 0;
     let failed = 0;
@@ -2732,7 +2787,7 @@ async function joinTwins(twin, box) {
   announce({ type: 'title', id: keep });
   delete state.history[oldId];
   delete state.history[keep];
-  syncMeta.gone.push({ id: drop, u: Date.now() });
+  syncMeta.gone.push({ id: drop, u: Date.parse(M.stamp(twin.updatedAt)) });
   if (state.route.name === 'title' && state.route.id === oldId && oldId !== keep) history.replaceState(null, '', '#/title/' + encodeURIComponent(keep));
   state.route = parseRoute();
   requestRender();
@@ -2772,21 +2827,25 @@ async function pushList() {
     bytes += b.length;
   }
   await send();
+  await saveSync();
   if (tooBig) state.sync.tooBig = (state.sync.tooBig || 0) + tooBig;
 }
 
-async function noteGone(id) {
+// before: when the title deleted forever last changed. Its "gone" note is newer than that, whatever the clocks say.
+async function noteGone(id, before) {
   if (!Y.syncable(id)) return;
-  await loadSync();
-  syncMeta.gone.push({ id, u: Date.now() });
-  delete syncMeta.pushed[id];
-  await saveSync();
+  await withSync(async () => {
+    await loadSync();
+    syncMeta.gone.push({ id, u: Date.parse(M.stamp(before)) });
+    delete syncMeta.pushed[id];
+    await saveSync();
+  });
   syncSoon();
 }
 
 // Your devices: what each one is, when it was added and last seen.
 async function loadDevices() {
-  if (!liveOn()) return;
+  if (!liveOn() || state.live.out) return;
   try {
     const { data } = await S.devices(liveBase(), liveAuth());
     const list = Array.isArray(data && data.devices) ? data.devices : [];
@@ -2833,12 +2892,18 @@ let refreshing = null;
 async function liveRefresh(force = false) {
   if (!liveOn() || !state.ready) return;
   if (refreshing) return refreshing;
-  if (!force && Date.now() - state.live.checkedAt < 60000) return;
+  // A device the server doesn't know asks again every 10 minutes, not every minute.
+  if (!force && Date.now() - state.live.checkedAt < (state.live.out ? OUT_RETRY : 60000)) return;
   refreshing = (async () => {
     const base = liveBase();
     const auth = liveAuth();
     try {
       const { data } = await S.whoami(base, auth);
+      if (state.live.out) {
+        state.live.out = '';
+        toast(`${state.settings.liveName} is back on this device.`);
+        loadDevices();
+      }
       // Whatever a server says, only real Rewinder names get in.
       const names = (v) => (Array.isArray(v) ? v.filter((n) => typeof n === 'string' && S.NAME.test(n)).slice(0, 200) : []);
       const friends = (Array.isArray(data && data.friends) ? data.friends : [])
@@ -2965,8 +3030,9 @@ async function moveHere(form) {
   if (!got) { toast('That is not a Rewinder code. Copy the whole line from your other device.'); return; }
   // A code never switches servers: someone could send you one that points at theirs.
   if (got.base !== liveBase()) { toast('That code is for another Rewinder server. It was not used.'); return; }
-  // A device that can't open its list (another key) may be added again; otherwise one name per device.
-  if (liveOn() && !state.sync.blocked) { toast(`This device is already ${state.settings.liveName}.`); return; }
+  // A device that can't open its list (another key), or that the server doesn't know, may be added again;
+  // otherwise one name per device.
+  if (liveOn() && !state.sync.blocked && !state.live.out) { toast(`This device is already ${state.settings.liveName}.`); return; }
   const here = M.live(state.titles).length;
   const ok = await ask({
     title: `Add this device to ${got.name}?`,
@@ -3176,6 +3242,8 @@ async function importBackup(file) {
     if (!ok) return;
   }
   flushSaves();
+  // What your other devices changed comes in first: the restored titles then count as newer than all of it.
+  if (synced) await syncNow().catch((err) => console.warn('Could not sync before the restore', err));
   try {
     await store.importAll(data, { bump: synced });
     if (synced) {
@@ -3195,8 +3263,8 @@ async function importBackup(file) {
   if (typeof look.scanlines === 'boolean') state.settings.scanlines = look.scanlines;
   state.settings.lastBackupAt = typeof data.exportedAt === 'string' ? data.exportedAt : new Date().toISOString();
   state.settings.changesSinceBackup = 0;
-  state.history = {};
-  state.ui.homeScore = {};
+  state.history = idMap();
+  state.ui.homeScore = idMap();
   applyTheme();
   await saveSettings();
   go('#/');
@@ -3444,6 +3512,8 @@ const actions = {
   'live-cancel': (el) => answerRequest('cancel', el.dataset.name),
   'live-move': () => showMoveCode(),
   'live-leave': () => leaveServer(),
+  'live-retry': () => liveRefresh(true),
+  'live-forget': () => forgetHere(),
   'device-remove': (el) => removeDevice(el.dataset.id),
   'live-copy': async () => {
     const box = document.getElementById('move-code');

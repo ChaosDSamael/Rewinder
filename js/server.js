@@ -7,11 +7,13 @@ import { timed } from './tmdb.js';
 export const DEFAULT_SERVER = 'https://rewinder.lavalleesonny.workers.dev';
 
 export class LiveError extends Error {
-  constructor(message, code, status) {
+  // server: the version the server says it runs ('' for a server from before 1.12, or no answer at all).
+  constructor(message, code, status, server) {
     super(message);
     this.name = 'LiveError';
     this.code = code;
     this.status = status || 0;
+    this.server = server || '';
   }
 }
 
@@ -51,15 +53,16 @@ async function call(base, path, { method = 'GET', auth, body, etag, ms = 20000 }
     } catch {
       throw clock.late() ? late() : new LiveError("Can't reach the Rewinder server. Check your internet connection.", 'network');
     }
-    if (res.status === 304) return { unchanged: true, data: null, etag };
+    const server = String(res.headers.get('X-Rewinder-Server') || '').slice(0, 20);
+    if (res.status === 304) return { unchanged: true, data: null, etag, server };
     let data = null;
     try {
       data = await res.json();
     } catch {
       if (clock.late()) throw late();
     }
-    if (!res.ok) throw new LiveError((data && data.message) || `The Rewinder server answered with an error (${res.status}).`, (data && data.error) || 'http', res.status);
-    return { unchanged: false, data, etag: res.headers.get('ETag') || '' };
+    if (!res.ok) throw new LiveError((data && data.message) || `The Rewinder server answered with an error (${res.status}).`, (data && data.error) || 'http', res.status, server);
+    return { unchanged: false, data, etag: res.headers.get('ETag') || '', server };
   } finally {
     clock.done();
   }
@@ -96,7 +99,8 @@ export function deviceLabel() {
 }
 
 // One line to paste on your other device: the server, your name, the one-time code, and the key to your list.
-// Never your secret. Whoever reads it before it's used can join your name: send it only to yourself.
+// Never your secret. Whoever gets it can join your name and read your list: it goes only to yourself, never to
+// someone who asks for it.
 export const moveCode = (base, name, code, key) => 'RW3.' + b64url(new TextEncoder().encode(JSON.stringify({ v: base, n: name, c: code, k: key })));
 
 export function readMoveCode(text) {

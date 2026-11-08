@@ -1,5 +1,5 @@
 // Rewinder — storage. Everything lives in this browser's IndexedDB; nothing is sent anywhere.
-import { DEFAULT_SETTINGS, normalizeTitle } from './model.js';
+import { DEFAULT_SETTINGS, normalizeTitle, stamp } from './model.js';
 
 const DB_NAME = 'rewinder';
 const DB_VERSION = 1;
@@ -185,16 +185,21 @@ export function isBackup(data) {
   return Boolean(data && data.app === 'rewinder' && data.kind !== 'card' && Array.isArray(data.titles));
 }
 
-// bump: the restored titles count as changed now, so they win on your other devices too.
+// bump: the restored titles count as changed now, after the version this device had, so they win on your other
+// devices too (even one whose clock runs ahead).
 export async function importAll(data, { bump = false } = {}) {
   if (!isBackup(data)) throw new Error('This file is not a Rewinder backup.');
-  const now = new Date().toISOString();
-  const titles = data.titles.map(normalizeTitle).map((t) => (bump ? { ...t, updatedAt: now } : t));
   const history = Array.isArray(data.history) ? data.history : [];
   const db = await open();
   const tx = db.transaction(['titles', 'history'], 'readwrite');
   const titleStore = tx.objectStore('titles');
   const historyStore = tx.objectStore('history');
+  const had = new Map(bump ? (await result(titleStore.getAll())).map((t) => [t && t.id, Date.parse(t && t.updatedAt) || 0]) : []);
+  const titles = data.titles.map(normalizeTitle).map((t) => {
+    if (!bump) return t;
+    const before = Math.max(had.get(t.id) || 0, Date.parse(t.updatedAt) || 0);
+    return { ...t, updatedAt: stamp(before) };
+  });
   titleStore.clear();
   historyStore.clear();
   for (const t of titles) titleStore.put(t);
