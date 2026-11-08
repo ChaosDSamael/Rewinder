@@ -1,26 +1,40 @@
 // Rewinder — games, from RAWG. Your own key, straight from your browser.
-import { ScanError } from './tmdb.js';
+import { ScanError, timed } from './tmdb.js';
 
 const API = 'https://api.rawg.io/api';
 
-async function get(path, params, key, signal) {
+// RAWG often answers slowly, or not at all: a request gets 20 seconds (a search, 10), then it's dropped.
+async function get(path, params, key, signal, ms = 20000) {
   const k = String(key || '').trim();
   if (!k) throw new ScanError('Add your RAWG key in Settings to search games.', 'nokey');
   const url = new URL(API + path);
   url.searchParams.set('key', k);
   for (const [name, value] of Object.entries(params || {})) url.searchParams.set(name, value);
-  let res;
+  const clock = timed(signal, ms);
+  const failed = (err) => {
+    if (clock.late()) return new ScanError('RAWG took too long to answer. Try again later.', 'timeout');
+    if (err && err.name === 'AbortError') return err;
+    return null;
+  };
   try {
-    res = await fetch(url, { headers: { accept: 'application/json' }, signal });
-  } catch (err) {
-    if (err && err.name === 'AbortError') throw err;
-    throw new ScanError("Can't reach RAWG right now. Try again later.", 'network');
+    let res;
+    try {
+      res = await fetch(url, { headers: { accept: 'application/json' }, signal: clock.signal });
+    } catch (err) {
+      throw failed(err) || new ScanError("Can't reach RAWG right now. Try again later.", 'network');
+    }
+    if (res.status === 401 || res.status === 403) throw new ScanError('RAWG refused your key. Check it in Settings.', 'auth');
+    if (res.status === 404) throw new ScanError('RAWG could not find that game.', 'notfound');
+    if (res.status === 429) throw new ScanError('RAWG is busy. Try again in a moment.', 'busy');
+    if (!res.ok) throw new ScanError(`RAWG is down or busy (${res.status}). Try again later.`, 'http');
+    try {
+      return await res.json();
+    } catch (err) {
+      throw failed(err) || new ScanError('RAWG sent an answer Rewinder could not read. Try again later.', 'http');
+    }
+  } finally {
+    clock.done();
   }
-  if (res.status === 401 || res.status === 403) throw new ScanError('RAWG refused your key. Check it in Settings.', 'auth');
-  if (res.status === 404) throw new ScanError('RAWG could not find that game.', 'notfound');
-  if (res.status === 429) throw new ScanError('RAWG is busy. Try again in a moment.', 'busy');
-  if (!res.ok) throw new ScanError(`RAWG is down or busy (${res.status}). Try again later.`, 'http');
-  return res.json();
 }
 
 export async function checkKey(key) {
@@ -48,7 +62,7 @@ const FAMILY = { PlayStation: 'PlayStation', Xbox: 'Xbox', Nintendo: 'Nintendo',
 const uniq = (list) => list.filter((v, i) => v && list.indexOf(v) === i);
 
 export async function search(query, key, signal) {
-  const data = await get('/games', { search: query, search_precise: 'true', page_size: '8' }, key, signal);
+  const data = await get('/games', { search: query, search_precise: 'true', page_size: '8' }, key, signal, 10000);
   return (data.results || []).filter((g) => g && Number.isInteger(g.id) && g.name).map((g) => ({
     type: 'game',
     id: g.id,

@@ -1,4 +1,5 @@
 // Rewinder — anime genres from AniList (no key needed). TMDB only says "Animation"; AniList says what kind.
+import { timed } from './tmdb.js';
 
 const API = 'https://graphql.anilist.co';
 const QUERY = `query ($search: String) {
@@ -24,36 +25,40 @@ async function turn() {
   if (at > now) await sleep(at - now);
 }
 
+// The answer, read; null when AniList says no or is busy twice. Fifteen seconds at most per try: past that, it throws.
 async function ask(search) {
   for (let attempt = 0; attempt < 2; attempt++) {
     await turn();
-    const res = await fetch(API, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ query: QUERY, variables: { search } })
-    });
-    if (res.status !== 429) return res;
-    const wait = Math.min(65, Number(res.headers.get('Retry-After')) || 30);
-    nextSlot = Date.now() + wait * 1000;
+    const clock = timed(null, 15000);
+    try {
+      const res = await fetch(API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ query: QUERY, variables: { search } }),
+        signal: clock.signal
+      });
+      if (res.status === 429) {
+        const wait = Math.min(65, Number(res.headers.get('Retry-After')) || 30);
+        nextSlot = Date.now() + wait * 1000;
+        continue;
+      }
+      return res.ok ? await res.json() : null;
+    } finally {
+      clock.done();
+    }
   }
   return null;
 }
 
 export async function animeGenres(titles, year) {
   for (const search of titles.filter(Boolean)) {
-    let res;
-    try {
-      res = await ask(search);
-    } catch {
-      return null;
-    }
-    if (!res || !res.ok) return null;
     let data;
     try {
-      data = await res.json();
+      data = await ask(search);
     } catch {
       return null;
     }
+    if (!data) return null;
     const list = (data && data.data && data.data.Page && data.data.Page.media) || [];
     const fits = (m) => !year || !m.startDate || !m.startDate.year || Math.abs(m.startDate.year - year) <= 1;
     const pick = list.find((m) => fits(m) && SERIES.includes(m.format)) || list.find(fits);

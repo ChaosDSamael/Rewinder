@@ -55,6 +55,8 @@ Rien à installer sur la TV, pas d'inscription : tu montres ton écran dessus, p
 - **Done · review** ouvre la page **Just added** : une ligne par titre, pour le noter, changer son statut ou l'enlever. Tout s'enregistre au fur et à mesure.
 - Ajoutés de mémoire : **Completed** compte comme vu, date inconnue (les épisodes déjà sortis sont cochés). La date se change sur la page du titre.
 - **Add it by hand** marche aussi : tu reviens dans Scan après.
+- Les jeux (RAWG) pis le reste (TMDB) avancent dans deux files séparées : un RAWG lent ne bloque jamais tes films. Un serveur qui ne répond pas abandonne après 20 secondes (10 pour une recherche) : le titre passe en rouge avec **Try again**, pis la file continue.
+- Tu fermes Rewinder avant la fin ? Les titres encore en route s'ajoutent tout seuls à la prochaine ouverture.
 
 ## Parcourir
 

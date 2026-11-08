@@ -15,7 +15,28 @@ export class ScanError extends Error {
 // The short "API Key" goes in the address; the long "API Read Access Token" goes in a header. Both work.
 const isToken = (key) => key.startsWith('eyJ') || key.length > 60;
 
-async function get(path, params, key, signal) {
+// A server that never answers would hold up everything waiting behind it (Add several goes one title at a time).
+// Past `ms`, the request is dropped: late() says it was the clock, not you, that stopped it.
+export function timed(outer, ms) {
+  const ctl = new AbortController();
+  let late = false;
+  const timer = setTimeout(() => { late = true; ctl.abort(); }, ms);
+  const pass = () => ctl.abort();
+  if (outer) {
+    if (outer.aborted) ctl.abort();
+    else outer.addEventListener('abort', pass, { once: true });
+  }
+  return {
+    signal: ctl.signal,
+    late: () => late,
+    done: () => { clearTimeout(timer); if (outer) outer.removeEventListener('abort', pass); }
+  };
+}
+
+const SEARCH_MS = 10000;
+const DETAIL_MS = 20000;
+
+async function get(path, params, key, signal, ms = DETAIL_MS) {
   const k = String(key || '').trim();
   if (!k) throw new ScanError('Add your TMDB key in Settings first.', 'nokey');
   const url = new URL(API + path);
@@ -23,18 +44,31 @@ async function get(path, params, key, signal) {
   const headers = { accept: 'application/json' };
   if (isToken(k)) headers.Authorization = `Bearer ${k}`;
   else url.searchParams.set('api_key', k);
-  let res;
+  const clock = timed(signal, ms);
+  const failed = (err) => {
+    if (clock.late()) return new ScanError('TMDB took too long to answer. Try again.', 'timeout');
+    if (err && err.name === 'AbortError') return err;
+    return null;
+  };
   try {
-    res = await fetch(url, { headers, signal });
-  } catch (err) {
-    if (err && err.name === 'AbortError') throw err;
-    throw new ScanError("Can't reach TMDB. Check your internet connection.", 'network');
+    let res;
+    try {
+      res = await fetch(url, { headers, signal: clock.signal });
+    } catch (err) {
+      throw failed(err) || new ScanError("Can't reach TMDB. Check your internet connection.", 'network');
+    }
+    if (res.status === 401) throw new ScanError('TMDB refused your key. Check it in Settings.', 'auth');
+    if (res.status === 404) throw new ScanError('TMDB could not find that title.', 'notfound');
+    if (res.status === 429) throw new ScanError('TMDB is busy. Try again in a few seconds.', 'busy');
+    if (!res.ok) throw new ScanError(`TMDB answered with an error (${res.status}).`, 'http');
+    try {
+      return await res.json();
+    } catch (err) {
+      throw failed(err) || new ScanError('TMDB sent an answer Rewinder could not read. Try again.', 'http');
+    }
+  } finally {
+    clock.done();
   }
-  if (res.status === 401) throw new ScanError('TMDB refused your key. Check it in Settings.', 'auth');
-  if (res.status === 404) throw new ScanError('TMDB could not find that title.', 'notfound');
-  if (res.status === 429) throw new ScanError('TMDB is busy. Try again in a few seconds.', 'busy');
-  if (!res.ok) throw new ScanError(`TMDB answered with an error (${res.status}).`, 'http');
-  return res.json();
 }
 
 // The start guide's "Check" button.
@@ -113,7 +147,7 @@ function seasonFrom(s) {
 }
 
 export async function search(query, key, signal) {
-  const data = await get('/search/multi', { query, include_adult: 'false', language: 'en-US', page: '1' }, key, signal);
+  const data = await get('/search/multi', { query, include_adult: 'false', language: 'en-US', page: '1' }, key, signal, SEARCH_MS);
   return (data.results || [])
     .filter((r) => r && (r.media_type === 'movie' || r.media_type === 'tv'))
     .slice(0, 12)
@@ -138,7 +172,7 @@ export async function searchKind(query, kind, year, key, signal) {
   const movie = kind === 'movie';
   const params = { query, include_adult: 'false', language: 'en-US', page: '1' };
   if (year) params[movie ? 'year' : 'first_air_date_year'] = String(year);
-  const data = await get(movie ? '/search/movie' : '/search/tv', params, key, signal);
+  const data = await get(movie ? '/search/movie' : '/search/tv', params, key, signal, SEARCH_MS);
   const type = movie ? 'movie' : 'tv';
   return (data.results || []).filter(Boolean).slice(0, 8).map((r) => {
     const title = mainTitle(r, type);

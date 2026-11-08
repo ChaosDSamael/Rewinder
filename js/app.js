@@ -1253,7 +1253,6 @@ function refreshScan() {
 const batch = state.batch;
 // True while Scan (or its add-by-hand form) is open in add mode: closing it with titles waiting offers the review.
 let batchDialog = false;
-let batchRunning = false;
 
 function refreshTally() {
   const box = document.getElementById('scan-tally');
@@ -1263,27 +1262,74 @@ function refreshTally() {
 }
 
 const batchWaiting = () => batch.queue.some((j) => j.state !== 'fail');
-const nextJob = () => batch.queue.find((j) => j.state === 'wait');
+// Two lines side by side: games (RAWG) and everything else (TMDB). A slow RAWG never holds up a movie.
+const laneOf = (j) => (j.type === 'game' ? 'rawg' : 'tmdb');
+const nextJob = (lane) => batch.queue.find((j) => j.state === 'wait' && laneOf(j) === lane);
+const batchLanes = new Set();
 
+// The titles still on their way are kept on this device: closing Rewinder (or a reload) doesn't lose them.
+// While the page goes away, the browser cancels what's in flight: that's not a failure, the line stays as it is.
+let queueSaving = Promise.resolve();
+let leaving = false;
+addEventListener('beforeunload', () => { leaving = true; setTimeout(() => { leaving = false; }, 3000); });
+addEventListener('pagehide', () => { leaving = true; });
+addEventListener('pageshow', (e) => { if (e.persisted) { leaving = false; runBatch(); } });
+function saveQueue() {
+  if (leaving) return queueSaving;
+  const left = batch.queue.filter((j) => j.state === 'wait' || j.state === 'run').map(({ key, type, id, status, title }) => ({ key, type, id, status, title }));
+  queueSaving = queueSaving.then(() => store.putMeta('batch', left.length ? left : null)).catch((err) => console.warn('Could not keep the Add several line', err));
+  return queueSaving;
+}
+
+// The title's job when it's already in this Add several (on its way or done), null when it's queued now.
 function queueBatch(type, id, status, title, openId) {
   const key = `${type}:${id}`;
-  if (batch.queue.some((j) => j.key === key && j.state !== 'fail')) return;
+  const there = batch.queue.find((j) => j.key === key && j.state !== 'fail');
+  if (there) return there;
   batch.queue = batch.queue.filter((j) => j.key !== key);
   if (openId) {
     const t = byId(openId);
     batch.queue.push({ key, type, id, status, title: t ? t.title : title, state: 'dup', titleId: openId, error: '' });
-    return;
+    return null;
   }
   batch.queue.push({ key, type, id, status, title, state: 'wait', titleId: null, error: '' });
+  saveQueue();
+  runBatch();
+  return null;
+}
+
+// At opening: titles left waiting last time (Rewinder closed too soon) go on.
+async function resumeBatch() {
+  let left;
+  try {
+    left = await store.getMeta('batch');
+  } catch {
+    return;
+  }
+  if (!Array.isArray(left) || !left.length) return;
+  let n = 0;
+  for (const j of left) {
+    if (!j || !['movie', 'tv', 'game'].includes(j.type) || !Number.isInteger(j.id)) continue;
+    const key = `${j.type}:${j.id}`;
+    if (batch.queue.some((x) => x.key === key)) continue;
+    batch.queue.push({ key, type: j.type, id: j.id, status: M.STATUSES.includes(j.status) ? j.status : 'watchlist', title: String(j.title || 'Untitled').slice(0, 200), state: 'wait', titleId: null, error: '' });
+    n++;
+  }
+  saveQueue();
+  if (!n) return;
+  toast(`${n} title${n === 1 ? '' : 's'} from Add several ${n === 1 ? 'was' : 'were'} still waiting. Adding ${n === 1 ? 'it' : 'them'} now.`, { action: { label: 'Review', run: () => go('#/added') }, timeout: 9000 });
   runBatch();
 }
 
-// One scan at a time, in the background: the search box stays free for the next title.
-async function runBatch() {
-  if (batchRunning) return;
-  batchRunning = true;
+// One scan at a time per line, in the background: the search box stays free for the next title.
+function runBatch() {
+  for (const lane of ['tmdb', 'rawg']) if (!batchLanes.has(lane) && nextJob(lane)) runLane(lane);
+}
+
+async function runLane(lane) {
+  batchLanes.add(lane);
   try {
-    for (let job = nextJob(); job; job = nextJob()) {
+    for (let job = nextJob(lane); job; job = nextJob(lane)) {
       job.state = 'run';
       refreshTally();
       requestRender();
@@ -1305,13 +1351,16 @@ async function runBatch() {
           await log(t, seen);
         }
       } catch (err) {
+        // Cancelled because the page is going away: it waits for the next opening.
+        if (leaving) { job.state = 'wait'; break; }
         Object.assign(job, { state: 'fail', error: err && err.message ? err.message : 'The scan failed.' });
       }
+      saveQueue();
       refreshTally();
       requestRender();
     }
   } finally {
-    batchRunning = false;
+    batchLanes.delete(lane);
   }
 }
 
@@ -1392,30 +1441,43 @@ async function runSearch() {
   scan.loading = true;
   scan.error = '';
   refreshScan();
-  // Both services at once; if one is down, the other still answers.
-  const out = await Promise.all(scan.sources.map((src) => {
-    const job = src === 'rawg' ? rawg.search(q, state.settings.rawgKey, controller.signal) : tmdb.search(q, state.settings.tmdbKey, controller.signal);
-    return job.then((results) => ({ src, results }), (error) => ({ src, error }));
-  }));
-  if (controller.signal.aborted) return;
-  scan.controller = null;
-  scan.loading = false;
-  const failed = out.filter((o) => o.error);
-  const answered = out.filter((o) => !o.error);
-  if (!answered.length) {
-    scan.results = [];
-    scan.notes = [];
-    scan.error = failed[0].error && failed[0].error.message ? failed[0].error.message : 'The search failed.';
+  // Both services at once. Each one's results show as soon as they come: a slow RAWG doesn't hold up TMDB's.
+  const out = [];
+  const show = () => {
+    const answered = out.filter((o) => !o.error);
+    const failed = out.filter((o) => o.error);
+    const pending = scan.sources.filter((src) => !out.some((o) => o.src === src));
+    if (!answered.length) {
+      if (pending.length) return;
+      scan.loading = false;
+      scan.results = [];
+      scan.notes = [];
+      scan.error = failed[0].error && failed[0].error.message ? failed[0].error.message : 'The search failed.';
+      refreshScan();
+      return;
+    }
+    scan.loading = false;
+    scan.error = '';
+    scan.notes = [
+      ...failed.map((o) => (o.error && o.error.message) || `${o.src.toUpperCase()} did not answer.`),
+      ...pending.map((src) => `Still waiting for ${src.toUpperCase()}…`)
+    ];
+    const of = (src) => (answered.find((o) => o.src === src) || { results: [] }).results;
+    const hint = scan.kindHint;
+    let list = hint === 'game' ? [...of('rawg'), ...of('tmdb')] : [...of('tmdb'), ...of('rawg')];
+    if (hint && hint !== 'game') list = [...list.filter((r) => r.kind === hint), ...list.filter((r) => r.kind !== hint)];
+    scan.results = list;
     refreshScan();
-    return;
-  }
-  scan.notes = failed.map((o) => (o.error && o.error.message) || `${o.src.toUpperCase()} did not answer.`);
-  const of = (src) => (answered.find((o) => o.src === src) || { results: [] }).results;
-  const hint = scan.kindHint;
-  let list = hint === 'game' ? [...of('rawg'), ...of('tmdb')] : [...of('tmdb'), ...of('rawg')];
-  if (hint && hint !== 'game') list = [...list.filter((r) => r.kind === hint), ...list.filter((r) => r.kind !== hint)];
-  scan.results = list;
-  refreshScan();
+  };
+  await Promise.all(scan.sources.map((src) => {
+    const job = src === 'rawg' ? rawg.search(q, state.settings.rawgKey, controller.signal) : tmdb.search(q, state.settings.tmdbKey, controller.signal);
+    return job.then((results) => ({ src, results }), (error) => ({ src, error })).then((o) => {
+      if (controller.signal.aborted) return;
+      out.push(o);
+      show();
+    });
+  }));
+  if (!controller.signal.aborted) scan.controller = null;
 }
 
 // TMDB says "Animation"; AniList knows the real anime genres. If it doesn't answer, TMDB's stay.
@@ -1442,9 +1504,11 @@ async function pickScan(type, id, openId) {
     const statusBox = document.getElementById('scan-status');
     const status = statusBox && M.STATUSES.includes(statusBox.value) ? statusBox.value : 'watchlist';
     const r = scan.results.find((x) => x.type === type && x.id === id);
-    queueBatch(type, id, status, r ? r.title : 'Untitled', openId);
+    const name = r ? r.title : 'Untitled';
+    const there = queueBatch(type, id, status, name, openId);
+    const note = !there ? '' : there.state === 'wait' || there.state === 'run' ? `${there.title} is already on its way.` : `${there.title} is already in your list.`;
     stopScanSearch();
-    Object.assign(scan, { query: '', results: [], notes: [], loading: false, error: '' });
+    Object.assign(scan, { query: '', results: [], notes: note ? [note] : [], loading: false, error: '' });
     refreshScan();
     refreshTally();
     const input = document.getElementById('scan-q');
@@ -2572,6 +2636,7 @@ const actions = {
     const j = batch.queue.find((x) => x.key === el.dataset.key);
     if (!j || j.state !== 'fail') return;
     Object.assign(j, { state: 'wait', error: '' });
+    saveQueue();
     render();
     runBatch();
   },
@@ -3031,6 +3096,7 @@ async function start() {
   if (!state.error) state.friends = await loadFriends();
   onRoute();
   registerWorker();
+  if (!state.error) resumeBatch().catch((err) => console.warn('Could not finish the last Add several', err));
   state.persisted = await store.persist();
   if (state.route.name === 'settings') requestRender();
   setTimeout(() => {

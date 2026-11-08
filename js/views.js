@@ -1152,7 +1152,7 @@ export function scanResults(scan, titles) {
   if (scan.error) return `<p class="dlg-error scan-msg">${esc(scan.error)}</p>`;
   const notes = (scan.notes || []).map((n) => `<p class="scan-note">${esc(n)}</p>`).join('');
   if (scan.loading) return '<p class="scan-hint">Searching…</p>';
-  if (scan.query.trim().length < 2) return `<p class="scan-hint">Type a title. Results come from ${scan.sources.map((x) => x.toUpperCase()).join(' and ')}.</p>`;
+  if (scan.query.trim().length < 2) return `${notes}<p class="scan-hint">Type a title. Results come from ${scan.sources.map((x) => x.toUpperCase()).join(' and ')}.</p>`;
   if (!scan.results.length) return `${notes}<p class="scan-hint">Nothing found.${scan.mode === 'link' ? ' Try another spelling.' : ' Try another spelling, or add it by hand.'}</p>`;
   return `${notes}<ul class="scan-list">${scan.results.map((r) => {
     const mine = titles.find((t) => !t.deletedAt && t.id !== scan.linkId && (r.type === 'game' ? t.rawgId === r.id : t.tmdbId === r.id && t.tmdbType === r.type));
