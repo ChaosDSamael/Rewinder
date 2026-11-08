@@ -1,6 +1,6 @@
 // Rewinder — data helpers. Pure functions: no DOM, no storage.
 
-export const APP_VERSION = '1.9.1';
+export const APP_VERSION = '1.10.0';
 
 export const KINDS = ['movie', 'tv', 'anime', 'game'];
 export const KIND_LABEL = { movie: 'Movie', tv: 'TV Show', anime: 'Anime', game: 'Game' };
@@ -42,7 +42,14 @@ export const DEFAULT_SETTINGS = {
   cardSharedAt: null,
   shareNudgeAt: null,
   // Your keyword groups (vampire, gladiator…), in the order you added them.
-  keywords: []
+  keywords: [],
+  // Friends by name: the Rewinder server (empty: the one built in), your name there, and the secret that proves it.
+  // The secret never goes in a backup or a card.
+  server: '',
+  liveName: '',
+  liveSecret: '',
+  liveSig: '',
+  liveAt: null
 };
 export const TRASH_DAYS = 30;
 

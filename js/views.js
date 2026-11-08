@@ -33,11 +33,15 @@ function ring(pct, r, width) {
   return `<svg class="ring" aria-hidden="true" focusable="false" width="${box}" height="${box}" viewBox="0 0 ${box} ${box}"><circle cx="${box / 2}" cy="${box / 2}" r="${r}" fill="none" stroke="rgba(255,255,255,.13)" stroke-width="${width}" stroke-dasharray="${seg.toFixed(2)} ${(unit - seg).toFixed(2)}"/>${lit ? `<circle cx="${box / 2}" cy="${box / 2}" r="${r}" fill="none" style="stroke:var(--accent)" stroke-width="${width}" stroke-dasharray="${parts.join(' ')}"/>` : ''}</svg>`;
 }
 
+const asks = (state) => (state.live ? state.live.incoming.length : 0);
+const asksLabel = (state) => (asks(state) ? `, ${asks(state)} friend request${asks(state) === 1 ? '' : 's'}` : '');
+
 function friendsButton(state) {
   const n = state.friends.length;
   const open = state.ui.friendsOpen;
+  const dot = state.ui.cardStale || asks(state);
   return `<div class="friends-wrap">
-<button type="button" class="icon-btn friends-btn" id="friends-btn" data-action="friends-toggle" aria-expanded="${open}" aria-controls="friends-pop" aria-label="Friends${n ? ', ' + friendCount(n) : ''}${state.ui.cardStale ? ', your card changed since you shared it' : ''}" title="${state.ui.cardStale ? 'Friends · your card changed, share it again' : 'Friends'}">${icon.bust}${n ? `<span class="count-badge" aria-hidden="true">${n}</span>` : ''}${state.ui.cardStale ? '<span class="ping ping-card" aria-hidden="true"></span>' : ''}</button>
+<button type="button" class="icon-btn friends-btn" id="friends-btn" data-action="friends-toggle" aria-expanded="${open}" aria-controls="friends-pop" aria-label="Friends${n ? ', ' + friendCount(n) : ''}${asksLabel(state)}${state.ui.cardStale ? ', your card changed since you shared it' : ''}" title="${asks(state) ? 'Friends · someone wants to be friends' : state.ui.cardStale ? 'Friends · your card changed, share it again' : 'Friends'}">${icon.bust}${n ? `<span class="count-badge" aria-hidden="true">${n}</span>` : ''}${dot ? '<span class="ping ping-card" aria-hidden="true"></span>' : ''}</button>
 ${open ? `<div class="sheet-scrim" data-action="friends-toggle" aria-hidden="true"></div>${friendsPanel(state)}` : ''}
 </div>`;
 }
@@ -52,32 +56,71 @@ export function tabbar(state) {
 <a class="tab" href="#/all"${on(r.name === 'browse')}>${icon.grid}<span>All</span></a>
 <button type="button" class="tab tab-scan" data-action="add">${icon.radar}<span>Scan</span></button>
 <a class="tab" href="#/list"${on(r.name === 'list')}>${icon.rows}<span>List</span></a>
-<button type="button" class="tab" data-action="friends-toggle" aria-expanded="${state.ui.friendsOpen}" aria-label="Friends${n ? ', ' + friendCount(n) : ''}${state.ui.cardStale ? ', your card changed since you shared it' : ''}"${on(r.name === 'friend')}>${icon.bust}<span>Friends</span>${n ? `<span class="count-badge" aria-hidden="true">${n}</span>` : ''}${state.ui.cardStale ? '<span class="ping ping-card" aria-hidden="true"></span>' : ''}</button>
+<button type="button" class="tab" data-action="friends-toggle" aria-expanded="${state.ui.friendsOpen}" aria-label="Friends${n ? ', ' + friendCount(n) : ''}${asksLabel(state)}${state.ui.cardStale ? ', your card changed since you shared it' : ''}"${on(r.name === 'friend')}>${icon.bust}<span>Friends</span>${n ? `<span class="count-badge" aria-hidden="true">${n}</span>` : ''}${state.ui.cardStale || asks(state) ? '<span class="ping ping-card" aria-hidden="true"></span>' : ''}</button>
 </nav>`;
 }
+
+const liveReady = (state) => Boolean(state.settings.liveName && state.settings.liveSecret);
+const ago = (iso) => {
+  const t = Date.parse(iso || '');
+  if (!t) return '';
+  const min = Math.round((Date.now() - t) / 60000);
+  if (min < 2) return 'just now';
+  if (min < 60) return `${min} min ago`;
+  const h = Math.round(min / 60);
+  if (h < 24) return `${h} h ago`;
+  return M.fmtDate(iso);
+};
 
 function friendsPanel(state) {
   const name = state.settings.cardName || '';
   const mine = M.live(state.titles).length;
+  const live = liveReady(state);
+  const L = state.live || { incoming: [], outgoing: [], error: '' };
   const rows = state.friends.map((f) => {
     const c = M.compareCard(state.titles, f);
     const pct = c.agreement;
-    return `<li><a class="fp-row" href="#/friend/${encodeURIComponent(f.id)}" aria-label="${esc(`${f.name}, ${pct === null ? 'no shared scores yet' : pct + '% agreement'}, compare`)}">${nick(f.name)}<span class="fp-who"><span class="fp-name">${esc(f.name)}</span><span class="fp-meta">${f.titles.length} titles · card from ${esc(M.fmtDate(f.at))}</span></span><span class="fp-pct" aria-hidden="true">${ring(pct || 0, 14, 3)}<span>${pct === null ? '—' : pct + '%'}</span></span></a></li>`;
+    const when = f.live ? `<span class="fp-live">live</span> · updated ${esc(ago(f.at))}` : `card from ${esc(M.fmtDate(f.at))}`;
+    return `<li><a class="fp-row" href="#/friend/${encodeURIComponent(f.id)}" aria-label="${esc(`${f.name}, ${pct === null ? 'no shared scores yet' : pct + '% agreement'}, compare`)}">${nick(f.name)}<span class="fp-who"><span class="fp-name">${esc(f.name)}</span><span class="fp-meta">${f.titles.length} titles · ${when}</span></span><span class="fp-pct" aria-hidden="true">${ring(pct || 0, 14, 3)}<span>${pct === null ? '—' : pct + '%'}</span></span></a></li>`;
   }).join('');
-  return `<section class="friends-pop" id="friends-pop" data-key="friends-pop" aria-labelledby="fp-title">
-<span class="corner c-tl" aria-hidden="true"></span><span class="corner c-tr" aria-hidden="true"></span><span class="corner c-bl" aria-hidden="true"></span><span class="corner c-br" aria-hidden="true"></span>
-<div class="fp-head"><h2 class="fp-title" id="fp-title">Friends</h2><span class="fp-count">${friendCount(state.friends.length)}</span></div>
-<div class="fp-mine">
+  const sent = state.settings.liveAt ? `Your card is up to date for your friends (${esc(ago(state.settings.liveAt))}).` : 'Your card goes to your friends in a moment.';
+  const mineBlock = live
+    ? `<div class="fp-mine">
+<div class="fp-me">${nick(name || state.settings.liveName)}<span class="fp-who"><span class="fp-me-title">${esc(state.settings.liveName)}</span><span class="fp-meta">${esc(name || state.settings.liveName)} · ${mine} titles</span></span></div>
+<p class="fp-note">${sent} Your scores, statuses, favorites and tags. Never your notes.</p>
+${L.error ? `<p class="fp-stale">${esc(L.error)}</p>` : ''}
+<form class="fp-add" data-form="live-add" autocomplete="off"><label class="label" for="live-who">Add a friend by name</label><div class="fp-add-row"><input id="live-who" name="who" class="input input-sm" maxlength="24" placeholder="Their Rewinder name" autocomplete="off" spellcheck="false" autocapitalize="off" enterkeyhint="send"><button type="submit" class="btn btn-primary btn-sm">Ask</button></div></form>
+</div>`
+    : `<div class="fp-mine">
 <div class="fp-me">${nick(name || '?')}<span class="fp-who"><span class="fp-me-title">Your card</span><span class="fp-meta">${esc(name || 'Your name')} · ${mine} titles</span></span></div>
 <label class="field"><span class="label">Your name on the card</span><input id="card-name" class="input input-sm" data-setting="cardName" value="${esc(name)}" maxlength="40" placeholder="Your first name" autocomplete="off" data-keep></label>
 <p class="fp-note">Your scores, statuses, favorites and tags. Never your notes.</p>
 ${state.ui.cardStale ? '<p class="fp-stale"><span class="ping-inline" aria-hidden="true"></span>Your list changed since you shared your card.</p>' : ''}
 <button type="button" class="btn btn-primary" data-action="card-share">${icon.upload}Share my card</button>
-</div>
-${rows ? `<ul class="fp-list" aria-label="Your friends">${rows}</ul>` : '<p class="fp-note">No friend yet. Ask a friend for their card, then add it here.</p>'}
-<button type="button" class="btn btn-dashed" data-action="card-pick">${icon.plus}Add a friend's card</button>
-<p class="fp-foot">Or drop the file anywhere in Rewinder. Cards stay on this device.</p>
+${state.liveServer ? '<p class="fp-note">Add friends by their name, and your cards stay up to date by themselves: <button type="button" class="inline-link" data-action="live-settings">create your Rewinder name</button>.</p>' : ''}
+</div>`;
+  const asked = L.incoming.length ? `<ul class="fp-asks" aria-label="Friend requests">${L.incoming.map((n) => `<li class="fp-ask" data-key="ask-${esc(n)}">${nick(n)}<span class="fp-who"><span class="fp-name">${esc(n)}</span><span class="fp-meta">wants to be friends</span></span><span class="fp-ask-btns"><button type="button" class="btn btn-primary btn-sm" data-action="live-accept" data-name="${esc(n)}">Accept</button><button type="button" class="btn btn-ghost btn-sm" data-action="live-decline" data-name="${esc(n)}">Decline</button></span></li>`).join('')}</ul>` : '';
+  const waiting = L.outgoing.length ? `<ul class="fp-asks fp-sent" aria-label="Requests you sent">${L.outgoing.map((n) => `<li class="fp-ask" data-key="sent-${esc(n)}">${nick(n)}<span class="fp-who"><span class="fp-name">${esc(n)}</span><span class="fp-meta">hasn't answered yet</span></span><span class="fp-ask-btns"><button type="button" class="btn btn-ghost btn-sm" data-action="live-cancel" data-name="${esc(n)}">Cancel</button></span></li>`).join('')}</ul>` : '';
+  return `<section class="friends-pop" id="friends-pop" data-key="friends-pop" aria-labelledby="fp-title">
+<span class="corner c-tl" aria-hidden="true"></span><span class="corner c-tr" aria-hidden="true"></span><span class="corner c-bl" aria-hidden="true"></span><span class="corner c-br" aria-hidden="true"></span>
+<div class="fp-head"><h2 class="fp-title" id="fp-title">Friends</h2><span class="fp-count">${friendCount(state.friends.length)}</span></div>
+${mineBlock}
+${asked}${waiting}
+${rows ? `<ul class="fp-list" aria-label="Your friends">${rows}</ul>` : `<p class="fp-note">${live ? 'No friend yet. Ask a friend by their Rewinder name.' : 'No friend yet. Ask a friend for their card, then add it here.'}</p>`}
+${live ? `<div class="fp-files"><button type="button" class="btn btn-ghost btn-sm" data-action="card-share">${icon.upload}Send my card as a file</button><button type="button" class="btn btn-ghost btn-sm" data-action="card-pick">${icon.plus}Add a card file</button></div>` : `<button type="button" class="btn btn-dashed" data-action="card-pick">${icon.plus}Add a friend's card</button>
+<p class="fp-foot">Or drop the file anywhere in Rewinder. Cards stay on this device.</p>`}
 </section>`;
+}
+
+// Your name, on your other device: one line to copy there. It works once.
+export function moveCodeDialog(code, name) {
+  return `<div class="dlg-form">
+<div class="dlg-head"><h2 class="dlg-title" id="dlg-move">Move ${esc(name)} to another device</h2></div>
+<p class="dlg-text">On your other device: Settings → Friends → <strong>Move my name here</strong>, then paste this code. ${esc(name)} then lives there, and this device stops sharing your card.</p>
+<label class="sr" for="move-code">Your code</label><textarea id="move-code" class="input move-code" rows="3" readonly spellcheck="false">${esc(code)}</textarea>
+<p class="dlg-note">Anyone with this code can use your name until you move it. Send it only to yourself.</p>
+<div class="dlg-actions"><button type="button" class="btn btn-ghost" data-action="dlg-close">Close</button><button type="button" class="btn btn-primary" data-action="live-copy">Copy the code</button></div>
+</div>`;
 }
 
 export function header(state) {
@@ -742,6 +785,31 @@ function installBlock(state) {
   return '<p class="set-text">To install Rewinder as an app, open your browser menu and choose <b>Install Rewinder</b> (Chrome, Edge, Brave). In Chrome you can also click the install icon at the right end of the address bar.</p>';
 }
 
+// Settings → Friends: your Rewinder name (made, moved, removed) and the server it lives on.
+function liveSettings(state) {
+  const s = state.settings;
+  const server = `<details class="set-more"><summary>Server address</summary><label class="field"><span class="label">Rewinder server</span><input id="set-server" class="input" data-setting="server" value="${esc(s.server || state.liveServer || '')}" placeholder="https://…workers.dev" autocomplete="off" spellcheck="false" autocapitalize="off" inputmode="url"></label><span class="panel-sub">Leave it as it is unless Sonny gives you another one.</span></details>`;
+  if (!state.liveServer) {
+    return `<p class="set-text">Your card goes to your friends by hand: Friends → Share my card. On a phone, that opens the share menu (Messenger, Discord, texts).</p>
+<p class="set-text dim">To add friends by their name instead, Rewinder needs its server address.</p>${server}`;
+  }
+  if (liveReady(state)) {
+    return `<p class="set-text">You are <strong>${esc(s.liveName)}</strong> on Rewinder. Friends add you by that name; once you both say yes, your cards stay up to date by themselves.</p>
+<p class="panel-sub">On the server: your name and your card (titles, scores, statuses, favorites, tags). Never your notes, dates or keys. Only the friends you accepted see your card. A card that isn't updated for 5 months is erased.</p>
+<div class="actions"><button type="button" class="btn btn-ghost" data-action="live-move">${icon.upload}Move my name to another device</button><button type="button" class="btn btn-ghost btn-danger" data-action="live-leave">Remove my name and card</button></div>
+${server}`;
+  }
+  return `<p class="set-text">Add friends by their name, and your cards stay up to date by themselves. Pick your Rewinder name once, with the invite code Sonny gave you.</p>
+<form class="live-claim" data-form="live-claim" autocomplete="off">
+<label class="field"><span class="label">Your Rewinder name</span><input id="live-name" name="livename" class="input" maxlength="24" placeholder="ChaosDSamael" autocomplete="off" spellcheck="false" autocapitalize="off"></label>
+<label class="field"><span class="label">Invite code</span><input id="live-invite" name="invite" class="input" maxlength="80" autocomplete="off" spellcheck="false" autocapitalize="off"></label>
+<div class="actions"><button type="submit" class="btn btn-primary">Create my name</button></div>
+</form>
+<p class="panel-sub">3 to 24 letters or numbers (. _ - inside). On the server: your name and your card (titles, scores, statuses, favorites, tags), never your notes, dates or keys. Only the friends you accept see your card.</p>
+<details class="set-more"><summary>Move my name here</summary><form class="live-here" data-form="live-here" autocomplete="off"><label class="field"><span class="label">Code from your other device</span><input id="live-code" name="movecode" class="input" placeholder="RW1.…" autocomplete="off" spellcheck="false" autocapitalize="off"></label><div class="actions"><button type="submit" class="btn btn-ghost">Move it here</button></div></form><span class="panel-sub">Your other device: Settings → Friends → Move my name to another device.</span></details>
+${server}`;
+}
+
 export function settingsView(state) {
   const s = state.settings;
   const trashed = state.titles.filter((t) => t.deletedAt).sort((a, b) => b.deletedAt.localeCompare(a.deletedAt));
@@ -773,8 +841,8 @@ ${folderBlock(state)}
 </section>
 
 <section class="set-sec" aria-labelledby="set-friends"><h2 class="h2" id="set-friends"><span class="sq" aria-hidden="true"></span>Friends</h2>
-<p class="set-text">Your card goes to your friends by hand: Friends → Share my card. On a phone, that opens the share menu (Messenger, Discord, texts).</p>
-<div class="set-row"><label class="switch"><input type="checkbox" role="switch" id="set-remind" data-setting="shareRemind"${s.shareRemind ? ' checked' : ''}><span class="switch-ui" aria-hidden="true"></span>Remind me to share my card</label><span class="panel-sub">Once you've shared it: a dot on Friends when your list changes, and a reminder once a day.</span></div>
+${liveSettings(state)}
+<div class="set-row"><label class="switch"><input type="checkbox" role="switch" id="set-remind" data-setting="shareRemind"${s.shareRemind ? ' checked' : ''}><span class="switch-ui" aria-hidden="true"></span>Remind me to share my card</label><span class="panel-sub">For cards sent as a file. Once you've shared one: a dot on Friends when your list changes, and a reminder once a day.</span></div>
 </section>
 
 <section class="set-sec" aria-labelledby="set-tv"><h2 class="h2" id="set-tv"><span class="sq" aria-hidden="true"></span>TV</h2>

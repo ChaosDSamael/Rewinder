@@ -6,6 +6,7 @@ import * as tmdb from './tmdb.js';
 import * as rawg from './rawg.js';
 import { animeGenres } from './anilist.js';
 import * as L from './importer.js';
+import * as S from './server.js';
 import { esc } from './ui.js';
 import { morphChildren } from './morph.js';
 
@@ -21,6 +22,8 @@ const state = {
   error: '',
   titles: [],
   settings: { ...M.DEFAULT_SETTINGS },
+  // Friends by name: requests waiting, friends on the server, the last check.
+  live: { incoming: [], outgoing: [], friends: [], checkedAt: 0, error: '' },
   route: { name: 'home' },
   current: null,
   history: {},
@@ -109,6 +112,7 @@ function render() {
   const focusAfter = state.ui.focusAfter;
   state.ui.focusAfter = null;
   state.ui.cardStale = state.ready && !state.error ? cardStale() : false;
+  state.liveServer = liveBase();
 
   root.classList.toggle('spoiler-on', Boolean(state.settings.spoiler));
   root.classList.toggle('scan-off', !state.settings.scanlines);
@@ -369,6 +373,7 @@ function countChange() {
   clearTimeout(staleTimer);
   staleTimer = setTimeout(() => { if (state.ready && !state.error && cardStale() !== state.ui.cardStale) requestRender(); }, 250);
   state.settings.changesSinceBackup = (state.settings.changesSinceBackup || 0) + 1;
+  publishSoon();
   clearTimeout(settingsTimer);
   settingsTimer = setTimeout(() => { settingsTimer = null; putSettingsNow().catch(console.error); }, 500);
 }
@@ -427,7 +432,19 @@ async function commitEdited(t, text) {
 }
 
 window.addEventListener('pagehide', flushSaves);
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushSaves(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    flushSaves();
+    // Leaving the app: a card change still waiting goes now.
+    if (publishTimer) publishNow().catch((err) => console.warn('Could not send your card', err));
+  } else {
+    liveRefresh().catch((err) => console.warn('Could not check your friends', err));
+  }
+});
+addEventListener('online', () => {
+  publishNow().catch((err) => console.warn('Could not send your card', err));
+  liveRefresh(true).catch((err) => console.warn('Could not check your friends', err));
+});
 
 /* ---------- toasts and dialogs ---------- */
 
@@ -2185,7 +2202,7 @@ const friendById = (id) => state.friends.find((f) => f.id === id) || null;
 async function loadFriends() {
   let saved = null;
   try { saved = await store.getMeta('friends'); } catch { saved = null; }
-  return (Array.isArray(saved) ? saved : []).filter((f) => f && Array.isArray(f.titles)).map((f) => ({ ...M.normalizeCard(f), loadedAt: f.loadedAt || null }));
+  return (Array.isArray(saved) ? saved : []).filter((f) => f && Array.isArray(f.titles)).map((f) => ({ ...M.normalizeCard(f), loadedAt: f.loadedAt || null, live: typeof f.live === 'string' && S.NAME.test(f.live) ? f.live : null }));
 }
 
 async function saveFriends() {
@@ -2221,6 +2238,7 @@ function canShareFiles() {
 let cardMemo = { rev: -1, list: null, name: null, sig: '' };
 function cardStale() {
   const s = state.settings;
+  if (liveOn()) return false;
   if (!s.shareRemind || !s.cardSharedSig || !s.cardName) return false;
   if (cardMemo.rev !== cardRev || cardMemo.list !== state.titles || cardMemo.name !== s.cardName) {
     cardMemo = { rev: cardRev, list: state.titles, name: s.cardName, sig: M.cardSignature(state.titles, s.cardName) };
@@ -2330,8 +2348,18 @@ async function addCard(raw) {
 async function removeFriend(id) {
   const f = friendById(id);
   if (!f) return;
-  const ok = await ask({ title: `Remove ${f.name}?`, body: `${f.name}'s card leaves this device. Add it again any time.`, yes: 'Remove', danger: true });
+  const ok = await ask(f.live
+    ? { title: `Remove ${f.name}?`, body: `You stop seeing each other's cards. ${f.live} can ask again later.`, yes: 'Remove', danger: true }
+    : { title: `Remove ${f.name}?`, body: `${f.name}'s card leaves this device. Add it again any time.`, yes: 'Remove', danger: true });
   if (!ok) return;
+  if (f.live && liveOn()) {
+    try {
+      await S.tell(liveBase(), liveAuth(), 'unfriend', f.live);
+    } catch (err) {
+      if (!liveFailed(err)) toast(err.message);
+      return;
+    }
+  }
   state.friends = state.friends.filter((x) => x.id !== id);
   await saveFriends();
   go('#/');
@@ -2376,8 +2404,215 @@ async function addFromFriend(index) {
 
 function toggleFriends(open) {
   state.ui.friendsOpen = typeof open === 'boolean' ? open : !state.ui.friendsOpen;
-  if (state.ui.friendsOpen) state.ui.focusAfter = state.friends.length ? null : 'card-name';
+  if (state.ui.friendsOpen) state.ui.focusAfter = state.friends.length || liveOn() ? null : 'card-name';
   render();
+  if (state.ui.friendsOpen) liveRefresh().catch((err) => console.warn('Could not check your friends', err));
+}
+
+/* ---------- friends by name ---------- */
+
+const liveBase = () => S.cleanBase(state.settings.server) || S.cleanBase(S.DEFAULT_SERVER);
+const liveAuth = () => (state.settings.liveName && state.settings.liveSecret ? { name: state.settings.liveName, secret: state.settings.liveSecret } : null);
+function liveOn() {
+  return Boolean(liveBase() && liveAuth());
+}
+const sameName = (a, b) => String(a || '').toLowerCase() === String(b || '').toLowerCase();
+
+// The server no longer knows this device: the name moved to another one, or was removed.
+function liveFailed(err) {
+  if (!err || err.status !== 401) return false;
+  const name = state.settings.liveName;
+  Object.assign(state.settings, { liveName: '', liveSecret: '', liveSig: '', liveAt: null });
+  state.live = { incoming: [], outgoing: [], friends: [], checkedAt: 0, error: '' };
+  saveSettings();
+  render();
+  toast(`${name} is no longer on this device: the name moved to another device, or was removed.`, { timeout: 0 });
+  return true;
+}
+
+function liveCard() {
+  if (!state.settings.cardId) state.settings.cardId = 'card-' + M.uid();
+  const name = (state.settings.cardName || '').trim() || state.settings.liveName;
+  return { card: M.makeCard(state.titles, { id: state.settings.cardId, name }), sig: M.cardSignature(state.titles, name) };
+}
+
+// Your card goes to the server a little after your last change, and once a month anyway (the server forgets a
+// card nobody refreshes for 5 months).
+let publishTimer = null;
+let publishing = null;
+function publishSoon(ms = 20000) {
+  if (!liveOn()) return;
+  clearTimeout(publishTimer);
+  publishTimer = setTimeout(() => { publishNow().catch((err) => console.warn('Could not send your card', err)); }, ms);
+}
+
+async function publishNow(force = false) {
+  if (!liveOn() || !state.ready) return;
+  if (publishing) return publishing;
+  clearTimeout(publishTimer);
+  flushSaves();
+  const { card, sig } = liveCard();
+  const month = 30 * 24 * 3600e3;
+  if (!force && sig === state.settings.liveSig && state.settings.liveAt && Date.now() - Date.parse(state.settings.liveAt) < month) return;
+  publishing = (async () => {
+    try {
+      const { data } = await S.publish(liveBase(), liveAuth(), card);
+      state.settings.liveSig = sig;
+      state.settings.liveAt = (data && data.at) || new Date().toISOString();
+      await saveSettings();
+      requestRender();
+    } catch (err) {
+      if (!liveFailed(err)) {
+        state.live.error = err.message;
+        requestRender();
+      }
+    } finally {
+      publishing = null;
+    }
+  })();
+  return publishing;
+}
+
+// Who asked, who you asked, and your friends' newest cards. At most once a minute unless asked.
+let refreshing = null;
+async function liveRefresh(force = false) {
+  if (!liveOn() || !state.ready) return;
+  if (refreshing) return refreshing;
+  if (!force && Date.now() - state.live.checkedAt < 60000) return;
+  refreshing = (async () => {
+    const base = liveBase();
+    const auth = liveAuth();
+    try {
+      const { data } = await S.whoami(base, auth);
+      state.live = { ...state.live, incoming: data.incoming || [], outgoing: data.outgoing || [], friends: data.friends || [], checkedAt: Date.now(), error: '' };
+      let changed = false;
+      for (const fr of state.live.friends) {
+        const mine = state.friends.find((f) => f.live && sameName(f.live, fr.name));
+        if (mine && fr.at && mine.at === new Date(fr.at).toISOString()) continue;
+        if (!fr.at) continue;
+        let got;
+        try {
+          got = await S.cardOf(base, auth, fr.name, mine ? `"${mine.at}"` : '');
+        } catch (err) {
+          if (liveFailed(err)) return;
+          if (err.code === 'no-card' || err.code === 'not-friends') continue;
+          throw err;
+        }
+        if (got.unchanged || !got.data || !M.isCard(got.data)) continue;
+        const card = { ...M.normalizeCard(got.data), loadedAt: new Date().toISOString(), live: fr.name };
+        if (card.id === state.settings.cardId) continue;
+        const i = state.friends.findIndex((f) => (f.live && sameName(f.live, fr.name)) || f.id === card.id);
+        if (i >= 0) state.friends[i] = card;
+        else state.friends.push(card);
+        changed = true;
+      }
+      // A friend who left, or removed you: their card leaves this device too.
+      const kept = state.friends.filter((f) => !f.live || state.live.friends.some((fr) => sameName(fr.name, f.live)));
+      if (kept.length !== state.friends.length) { state.friends = kept; changed = true; }
+      if (changed) await saveFriends();
+    } catch (err) {
+      if (!liveFailed(err)) state.live.error = err.message;
+    } finally {
+      refreshing = null;
+      requestRender();
+    }
+  })();
+  return refreshing;
+}
+
+async function createName(form) {
+  const name = String(form.elements.livename ? form.elements.livename.value : '').trim();
+  const invite = String(form.elements.invite ? form.elements.invite.value : '').trim();
+  if (!S.NAME.test(name)) { toast('A name is 3 to 24 letters or numbers, with . _ - inside if you like.'); return; }
+  if (!invite) { toast('Type the invite code Sonny gave you.'); return; }
+  const secret = S.newSecret();
+  try {
+    const { data } = await S.claim(liveBase(), name, invite, secret);
+    Object.assign(state.settings, { liveName: data.name, liveSecret: secret, liveSig: '', liveAt: null });
+    if (!state.settings.cardName) state.settings.cardName = data.name;
+    await saveSettings();
+  } catch (err) {
+    toast(err.message);
+    return;
+  }
+  render();
+  toast(`You are ${state.settings.liveName} on Rewinder. Add your friends by their name in Friends.`, { action: { label: 'Friends', run: () => toggleFriends(true) }, timeout: 9000 });
+  await publishNow(true);
+  await liveRefresh(true);
+}
+
+async function addByName(form) {
+  const field = form.elements.who;
+  const name = String(field ? field.value : '').trim();
+  if (!name) return;
+  if (!liveOn()) return;
+  if (!S.NAME.test(name)) { toast('That is not a Rewinder name.'); return; }
+  try {
+    const { data } = await S.tell(liveBase(), liveAuth(), 'request', name);
+    if (field) field.value = '';
+    toast(data.state === 'friends' ? `You and ${data.name} are friends now.` : `Request sent to ${data.name}. Their card shows up here once they say yes.`);
+  } catch (err) {
+    if (!liveFailed(err)) toast(err.message);
+    return;
+  }
+  await liveRefresh(true);
+}
+
+async function answerRequest(what, name) {
+  if (!liveOn()) return;
+  try {
+    await S.tell(liveBase(), liveAuth(), what, name);
+  } catch (err) {
+    if (!liveFailed(err)) toast(err.message);
+    return;
+  }
+  if (what === 'accept') toast(`You and ${name} are friends now.`);
+  await publishNow();
+  await liveRefresh(true);
+}
+
+function showMoveCode() {
+  if (!liveOn()) return;
+  openDialog(V.moveCodeDialog(S.moveCode(liveBase(), liveAuth()), state.settings.liveName), '#move-code', 'dlg-move');
+}
+
+async function moveHere(form) {
+  const got = S.readMoveCode(form.elements.movecode ? form.elements.movecode.value : '');
+  if (!got) { toast('That is not a Rewinder name code. Copy the whole line from your other device.'); return; }
+  const secret = S.newSecret();
+  try {
+    await S.move(got.base, { name: got.name, secret: got.secret }, secret);
+  } catch (err) {
+    toast(err.status === 401 ? 'That code was already used, or the name was removed.' : err.message);
+    return;
+  }
+  Object.assign(state.settings, { liveName: got.name, liveSecret: secret, liveSig: '', liveAt: null, server: got.base === S.cleanBase(S.DEFAULT_SERVER) ? '' : got.base });
+  if (!state.settings.cardName) state.settings.cardName = got.name;
+  await saveSettings();
+  render();
+  toast(`${got.name} now lives on this device. Your other device no longer shares your card.`, { timeout: 9000 });
+  await publishNow(true);
+  await liveRefresh(true);
+}
+
+async function leaveServer() {
+  if (!liveOn()) return;
+  const name = state.settings.liveName;
+  const ok = await ask({ title: `Remove ${name} from the server?`, body: 'Your name, your card and your friends there are erased. The cards your friends sent you leave this device too. Your own list stays.', yes: 'Remove', danger: true });
+  if (!ok) return;
+  try {
+    await S.leave(liveBase(), liveAuth());
+  } catch (err) {
+    if (!liveFailed(err)) toast(err.message);
+    return;
+  }
+  Object.assign(state.settings, { liveName: '', liveSecret: '', liveSig: '', liveAt: null });
+  state.live = { incoming: [], outgoing: [], friends: [], checkedAt: 0, error: '' };
+  state.friends = state.friends.filter((f) => !f.live);
+  await saveFriends();
+  await saveSettings();
+  render();
+  toast(`${name} is gone from the server.`);
 }
 
 /* ---------- TV mode, guides ---------- */
@@ -2793,6 +3028,17 @@ const actions = {
   'friend-all': () => { state.ui.friendAll = true; render(); },
   'friend-add': (el) => addFromFriend(Number(el.dataset.i)),
   'friend-remove': (el) => removeFriend(el.dataset.id),
+  'live-accept': (el) => answerRequest('accept', el.dataset.name),
+  'live-decline': (el) => answerRequest('decline', el.dataset.name),
+  'live-cancel': (el) => answerRequest('cancel', el.dataset.name),
+  'live-move': () => showMoveCode(),
+  'live-leave': () => leaveServer(),
+  'live-copy': async () => {
+    const box = document.getElementById('move-code');
+    if (!box) return;
+    try { await navigator.clipboard.writeText(box.value); toast('Code copied.'); } catch { box.select(); toast('Select the code and copy it.'); }
+  },
+  'live-settings': () => { state.ui.focusAfter = 'live-name'; toggleFriends(false); go('#/settings'); },
   'ep-unknown': (el) => setEpisodeField(el.dataset.ep, 'watched', 'unknown').catch(fail),
   'date-unknown': (el) => setDate(el.dataset.key, 'unknown').catch(fail),
   'date-close': () => closeDateEdit(),
@@ -2959,7 +3205,13 @@ document.addEventListener('change', (e) => {
     if (name === 'scanlines') state.settings.scanlines = el.checked;
     else if (name === 'tvButton' || name === 'shareRemind') state.settings[name] = el.checked;
     else if (name === 'accent' && M.isHexColor(el.value)) state.settings.accent = el.value;
-    else if (name === 'cardName') state.settings.cardName = el.value.trim().slice(0, 40);
+    else if (name === 'cardName') { state.settings.cardName = el.value.trim().slice(0, 40); publishSoon(3000); }
+    else if (name === 'server') {
+      const v = el.value.trim();
+      if (v && !S.cleanBase(v)) { toast('A server address starts with https://'); return; }
+      state.settings.server = S.cleanBase(v) === S.cleanBase(S.DEFAULT_SERVER) ? '' : S.cleanBase(v);
+      state.live.checkedAt = 0;
+    }
     else if (name === 'tmdbKey' || name === 'rawgKey') {
       state.settings[name] = el.value.trim().slice(0, 400);
       toast(state.settings[name] ? 'Key saved in this browser.' : 'Key removed.');
@@ -2998,7 +3250,10 @@ const forms = {
   'tag-add': addTags,
   'prov-add': addProvider,
   'game-plat-add': addGamePlatform,
-  'kw-add': (form) => addKeyword(typedKeyword(form.elements.kw ? form.elements.kw.value : ''))
+  'kw-add': (form) => addKeyword(typedKeyword(form.elements.kw ? form.elements.kw.value : '')),
+  'live-claim': (form) => createName(form),
+  'live-add': (form) => addByName(form),
+  'live-here': (form) => moveHere(form)
 };
 
 document.addEventListener('submit', (e) => {
@@ -3097,6 +3352,12 @@ async function start() {
   onRoute();
   registerWorker();
   if (!state.error) resumeBatch().catch((err) => console.warn('Could not finish the last Add several', err));
+  if (!state.error && liveOn()) {
+    setTimeout(() => {
+      publishNow().catch((err) => console.warn('Could not send your card', err));
+      liveRefresh(true).catch((err) => console.warn('Could not check your friends', err));
+    }, 3000);
+  }
   state.persisted = await store.persist();
   if (state.route.name === 'settings') requestRender();
   setTimeout(() => {

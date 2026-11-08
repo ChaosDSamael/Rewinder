@@ -84,7 +84,28 @@ Rien à installer sur la TV, pas d'inscription : tu montres ton écran dessus, p
 - Ta carte contient tes notes, tes statuts, tes favoris et tes tags. Jamais tes commentaires, tes dates ni tes clés.
 - Pour ajouter la carte d'un ami (.json ou .txt) : **Add a friend's card**, ou glisse le fichier n'importe où dans Rewinder. Une carte plus récente du même ami remplace l'ancienne.
 - L'écran de l'ami : le % d'accord (la part de vos titres en commun où vous êtes à 1 point ou moins), **In common**, ce qu'il a vu et pas toi (**+ Watchlist** l'ajoute avec « Recommended by »), pis vos plus gros désaccords.
-- Les cartes restent sur ton ordi. Elles ne se mettent pas à jour toutes seules : ton ami t'en renvoie une quand sa liste change.
+- Les cartes en fichier restent sur ton ordi. Elles ne se mettent pas à jour toutes seules : ton ami t'en renvoie une quand sa liste change. Pour que ça se fasse tout seul, voir **Amis par nom** juste en dessous.
+
+## Amis par nom
+
+- **Settings → Friends** : choisis ton nom Rewinder (3 à 24 lettres ou chiffres, `. _ -` permis au milieu) avec le code d'invitation que Sonny t'a donné. Premier arrivé, premier servi.
+- **Friends → Add a friend by name** : ton ami reçoit une demande (un point sur **Friends**). Quand il dit **Accept**, vous voyez vos cartes l'un l'autre, pis elles se mettent à jour toutes seules : ta carte part environ 20 secondes après ton dernier changement, pis celle de tes amis arrive quand tu ouvres Rewinder ou **Friends**.
+- Sur le serveur : ton nom pis ta carte (titres, scores, statuts, favoris, tags). Jamais tes notes, tes dates ou tes clés. Seulement les amis que tu as acceptés voient ta carte. Une carte pas mise à jour depuis 5 mois est effacée (règle de TMDB : rien de gardé plus de 6 mois).
+- Ton nom vit sur un appareil à la fois (chaque appareil a sa propre liste). **Move my name to another device** donne un code à coller sur l'autre appareil (**Move my name here**) : le code marche une seule fois, pis l'ancien appareil arrête de partager.
+- **Remove** sur la page d'un ami : vous arrêtez de voir vos cartes. **Remove my name and card** efface tout sur le serveur.
+- Les cartes en fichier marchent encore : **Send my card as a file** pis **Add a card file**.
+
+### Le serveur (une fois, pour Sonny)
+
+Un Cloudflare Worker gratuit (`server/worker.js`) avec un espace KV. Gratuit jusqu'à 100 000 lectures pis 1 000 écritures par jour, en masse pour une gang d'amis.
+
+1. Crée un compte gratuit sur [dash.cloudflare.com](https://dash.cloudflare.com/sign-up).
+2. **Workers & Pages → Create → Start with Hello World** : nomme-le `rewinder`, puis **Deploy**.
+3. **Edit code** : remplace tout par le contenu de `server/worker.js`, puis **Deploy**.
+4. **Storage & Databases → KV → Create** : nomme-le `rewinder-cards`.
+5. Ton worker → **Bindings → Add binding → KV namespace** : nom de variable `CARDS`, espace `rewinder-cards`.
+6. Ton worker → **Settings → Variables and Secrets → Add** : type **Secret**, nom `INVITE`, valeur = ton code d'invitation. **Deploy**.
+7. L'adresse `https://rewinder.<ton-sous-domaine>.workers.dev` va dans `DEFAULT_SERVER` (`js/server.js`) pour tout le monde, ou dans **Settings → Friends → Server address** pour essayer.
 
 ## Importer une liste
 

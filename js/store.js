@@ -145,6 +145,7 @@ export async function exportAll() {
   const safe = { ...DEFAULT_SETTINGS, ...(settings || {}) };
   delete safe.tmdbKey;
   delete safe.rawgKey;
+  delete safe.liveSecret;
   return { app: 'rewinder', format: 1, exportedAt: new Date().toISOString(), titles, history, settings: safe };
 }
 

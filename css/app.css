@@ -1099,3 +1099,25 @@ a.bat-title:hover { color: var(--accent); }
   .grp-tab { padding: 0 6px; font-size: 11.5px; letter-spacing: .06em; }
   .kw-form { flex-basis: 100%; max-width: none; }
 }
+
+/* 1.10: friends by name */
+.inline-link { display: inline; padding: 0; background: none; border: 0; font: inherit; color: var(--accent); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.inline-link:hover { color: var(--text); }
+.fp-add { display: flex; flex-direction: column; gap: 6px; }
+.fp-add-row { display: flex; gap: 8px; }
+.fp-add-row .input { flex: 1 1 auto; min-width: 0; }
+.fp-asks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.fp-ask { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 12px; padding: 10px 12px; background: var(--s2); border: 1px solid var(--accent); border-radius: 4px; }
+.fp-sent .fp-ask { border-color: var(--line-2); }
+.fp-ask .fp-who { flex: 1 1 140px; min-width: 0; }
+.fp-ask-btns { display: flex; gap: 8px; margin-left: auto; }
+.fp-live { font-family: var(--mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+.fp-files { display: flex; flex-wrap: wrap; gap: 8px; }
+.move-code { width: 100%; box-sizing: border-box; font-family: var(--mono); font-size: 12px; line-height: 1.5; word-break: break-all; resize: none; }
+.set-more { margin-top: 4px; }
+.set-more > summary { cursor: pointer; font-family: var(--mono); font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); min-height: 36px; display: flex; align-items: center; }
+.set-more > summary:hover { color: var(--text); }
+.set-more[open] > summary { color: var(--text); }
+.set-more > form, .set-more > .field { margin-top: 8px; }
+.live-claim { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; align-items: end; max-width: 720px; }
+.live-claim .actions { grid-column: 1 / -1; }
