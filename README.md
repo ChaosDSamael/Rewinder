@@ -103,11 +103,9 @@ Un Cloudflare Worker gratuit (`server/worker.js`) avec une base de données D1. 
 2. **Workers & Pages → Create → Start with Hello World** : nomme-le `rewinder`, puis **Deploy**.
 3. **Edit code** : remplace tout par le contenu de `server/worker.js`, puis **Deploy**.
 4. **Storage & Databases → D1 SQL Database → Create Database** : nomme-la `rewinder`.
-5. Ton worker → **Bindings → Add binding → D1 database** : nom de variable `DB`, base `rewinder`.
-6. Ton worker → **Settings → Variables and Secrets → Add** : type **Secret**, nom `INVITE`, valeur = ton code d'invitation, **16 caractères ou plus**, au hasard (ex. `renard-orage-42-popcorn-lune`). En bas de 16, le serveur refuse de créer des noms. **Deploy**.
-7. L'adresse `https://rewinder.<ton-sous-domaine>.workers.dev` va dans `DEFAULT_SERVER` (`js/server.js`) pis dans `connect-src` (`index.html`) : après ça, personne n'a d'adresse à taper, pis Rewinder ne peut parler à aucun autre serveur. Pour essayer avant : **Settings → Friends → Server address**.
-
-Déjà fait avec KV (1.10.0) ? Remplace le code du worker (étape 3), fais les étapes 4 pis 5, change le code d'invitation pour 16 caractères ou plus. L'espace KV peut être effacé.
+5. Ton worker → **Settings → Bindings → + Add binding → D1 database** : nom de variable `DB`, base `rewinder`.
+6. Ton worker → **Settings → Runtime variables and secrets → + Add variable** : Key `INVITE`, Value = ton code d'invitation, **16 caractères ou plus**, inventé par toi (4 mots au hasard pis un chiffre, avec des tirets, en minuscules). Coche **Secret**, puis **Add variable and deploy**. Note-le avant : Cloudflare le remontre plus jamais. En bas de 16, le serveur refuse de créer des noms.
+7. L'adresse du serveur (`https://rewinder.lavalleesonny.workers.dev`) est dans `DEFAULT_SERVER` (`js/server.js`) pis dans `connect-src` (`index.html`) : personne n'a d'adresse à taper, pis Rewinder ne peut parler à aucun autre serveur. Si le serveur change d'adresse un jour, change les deux.
 
 ## Sécurité
 
@@ -127,7 +125,6 @@ Ce que toi tu dois faire (Sonny) :
 - Active la double authentification (2FA) sur **GitHub** pis sur **Cloudflare**. Quelqu'un qui prend ton GitHub peut changer le code que tous tes amis reçoivent à la prochaine mise à jour.
 - Garde le code d'invitation long pis au hasard, entre amis. S'il fuit, change le secret `INVITE` dans Cloudflare : les noms déjà créés continuent de marcher.
 - Ne publie pas d'autre site GitHub Pages sur le compte ChaosDSamael : tous les sites `chaosdsamael.github.io` partagent le même stockage dans le navigateur, donc un autre site pourrait lire les clés de Rewinder. Si un jour tu veux d'autres sites, déménage Rewinder sur son propre domaine.
-- Si tu changes l'adresse du serveur, change aussi `connect-src` dans `index.html`.
 
 Ce qui reste (connu, accepté) :
 

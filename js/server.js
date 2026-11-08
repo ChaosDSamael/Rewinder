@@ -4,7 +4,7 @@
 import { timed } from './tmdb.js';
 
 // The address of the server everyone uses. Settings → Friends can hold another one.
-export const DEFAULT_SERVER = '';
+export const DEFAULT_SERVER = 'https://rewinder.lavalleesonny.workers.dev';
 
 export class LiveError extends Error {
   constructor(message, code, status) {
@@ -17,7 +17,8 @@ export class LiveError extends Error {
 
 // https only (a local test server aside), no path, no trailing slash.
 export function cleanBase(v) {
-  const s = String(v || '').trim().replace(/\/+$/, '');
+  // Lower case: a host is the same whatever its case, so one server never looks like two.
+  const s = String(v || '').trim().replace(/\/+$/, '').toLowerCase();
   return /^https:\/\/[a-z0-9.-]+(:\d{1,5})?$/i.test(s) || /^http:\/\/(localhost|127\.0\.0\.1)(:\d{1,5})?$/.test(s) ? s : '';
 }
 

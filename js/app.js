@@ -281,14 +281,14 @@ async function syncFromOtherWindow(msg) {
       if (state.route.name === 'title' && state.route.id === msg.id) loadHistory(msg.id);
     }
   } else if (msg.type === 'settings') {
-    state.settings = await store.getSettings();
+    state.settings = tidyServer(await store.getSettings());
     applyTheme();
   } else if (msg.type === 'friends') {
     state.friends = await loadFriends();
   } else if (msg.type === 'all') {
     const fresh = await store.loadAll();
     state.titles = fresh.titles.map(M.normalizeTitle);
-    state.settings = { ...M.DEFAULT_SETTINGS, ...fresh.settings };
+    state.settings = tidyServer({ ...M.DEFAULT_SETTINGS, ...fresh.settings });
     state.history = {};
     applyTheme();
   } else {
@@ -2425,6 +2425,12 @@ function toggleFriends(open) {
 /* ---------- friends by name ---------- */
 
 const liveBase = () => S.cleanBase(state.settings.server) || S.cleanBase(S.DEFAULT_SERVER);
+// Sonny's server is built in: a saved copy of its address is dropped, so the address field stays hidden.
+function tidyServer(s) {
+  s.liveHost = S.cleanBase(s.liveHost);
+  s.server = S.cleanBase(s.server) === S.cleanBase(S.DEFAULT_SERVER) ? '' : S.cleanBase(s.server);
+  return s;
+}
 // Your name and secret go only to the server they were made on. Point Rewinder at another server (by mistake, or
 // because someone told you to) and it has nothing to send there.
 function liveAuth() {
@@ -3393,7 +3399,7 @@ async function start() {
   try {
     const { titles, settings } = await store.loadAll();
     state.titles = titles.map(M.normalizeTitle);
-    state.settings = { ...M.DEFAULT_SETTINGS, ...settings };
+    state.settings = tidyServer({ ...M.DEFAULT_SETTINGS, ...settings });
   } catch (err) {
     console.error(err);
     state.error = err && err.message ? err.message : 'The browser refused to open the storage.';
