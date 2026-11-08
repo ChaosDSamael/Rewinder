@@ -60,7 +60,7 @@ export function tabbar(state) {
 </nav>`;
 }
 
-const liveReady = (state) => Boolean(state.settings.liveName && state.settings.liveSecret);
+const liveReady = (state) => Boolean(state.settings.liveName && state.settings.liveSecret && state.settings.liveHost && state.settings.liveHost === state.liveServer);
 const ago = (iso) => {
   const t = Date.parse(iso || '');
   if (!t) return '';
@@ -81,7 +81,7 @@ function friendsPanel(state) {
     const c = M.compareCard(state.titles, f);
     const pct = c.agreement;
     const when = f.live ? `<span class="fp-live">live</span> · updated ${esc(ago(f.at))}` : `card from ${esc(M.fmtDate(f.at))}`;
-    return `<li><a class="fp-row" href="#/friend/${encodeURIComponent(f.id)}" aria-label="${esc(`${f.name}, ${pct === null ? 'no shared scores yet' : pct + '% agreement'}, compare`)}">${nick(f.name)}<span class="fp-who"><span class="fp-name">${esc(f.name)}</span><span class="fp-meta">${f.titles.length} titles · ${when}</span></span><span class="fp-pct" aria-hidden="true">${ring(pct || 0, 14, 3)}<span>${pct === null ? '—' : pct + '%'}</span></span></a></li>`;
+    return `<li><a class="fp-row" href="#/friend/${encodeURIComponent(f.id)}" aria-label="${esc(`${f.name}, ${pct === null ? 'no shared scores yet' : pct + '% agreement'}, compare`)}">${nick(f.name)}<span class="fp-who"><span class="fp-name">${esc(f.name)}</span><span class="fp-meta">${f.alias ? esc(f.alias) + ' · ' : ''}${f.titles.length} titles · ${when}</span></span><span class="fp-pct" aria-hidden="true">${ring(pct || 0, 14, 3)}<span>${pct === null ? '—' : pct + '%'}</span></span></a></li>`;
   }).join('');
   const sent = state.settings.liveAt ? `Your card is up to date for your friends (${esc(ago(state.settings.liveAt))}).` : 'Your card goes to your friends in a moment.';
   const mineBlock = live
@@ -118,7 +118,7 @@ export function moveCodeDialog(code, name) {
 <div class="dlg-head"><h2 class="dlg-title" id="dlg-move">Move ${esc(name)} to another device</h2></div>
 <p class="dlg-text">On your other device: Settings → Friends → <strong>Move my name here</strong>, then paste this code. ${esc(name)} then lives there, and this device stops sharing your card.</p>
 <label class="sr" for="move-code">Your code</label><textarea id="move-code" class="input move-code" rows="3" readonly spellcheck="false">${esc(code)}</textarea>
-<p class="dlg-note">Anyone with this code can use your name until you move it. Send it only to yourself.</p>
+<p class="dlg-note">It works once, for 15 minutes. Anyone who has it before then can take your name: send it only to yourself.</p>
 <div class="dlg-actions"><button type="button" class="btn btn-ghost" data-action="dlg-close">Close</button><button type="button" class="btn btn-primary" data-action="live-copy">Copy the code</button></div>
 </div>`;
 }
@@ -788,14 +788,18 @@ function installBlock(state) {
 // Settings → Friends: your Rewinder name (made, moved, removed) and the server it lives on.
 function liveSettings(state) {
   const s = state.settings;
-  const server = `<details class="set-more"><summary>Server address</summary><label class="field"><span class="label">Rewinder server</span><input id="set-server" class="input" data-setting="server" value="${esc(s.server || state.liveServer || '')}" placeholder="https://…workers.dev" autocomplete="off" spellcheck="false" autocapitalize="off" inputmode="url"></label><span class="panel-sub">Leave it as it is unless Sonny gives you another one.</span></details>`;
+  // With Sonny's server built in, there is no address to change (or to be talked into changing).
+  const server = state.liveServerFixed ? '' : `<details class="set-more"><summary>Server address</summary><label class="field"><span class="label">Rewinder server</span><input id="set-server" class="input" data-setting="server" value="${esc(s.server || state.liveServer || '')}" placeholder="https://…workers.dev" autocomplete="off" spellcheck="false" autocapitalize="off" inputmode="url"></label><span class="panel-sub">Leave it as it is unless Sonny gives you another one.</span></details>`;
   if (!state.liveServer) {
     return `<p class="set-text">Your card goes to your friends by hand: Friends → Share my card. On a phone, that opens the share menu (Messenger, Discord, texts).</p>
 <p class="set-text dim">To add friends by their name instead, Rewinder needs its server address.</p>${server}`;
   }
+  if (s.liveName && s.liveSecret && s.liveHost && s.liveHost !== state.liveServer) {
+    return `<p class="set-text">Your name <strong>${esc(s.liveName)}</strong> belongs to another server (${esc(s.liveHost)}). Rewinder never sends it anywhere else: set that address back to use it.</p>${server}`;
+  }
   if (liveReady(state)) {
     return `<p class="set-text">You are <strong>${esc(s.liveName)}</strong> on Rewinder. Friends add you by that name; once you both say yes, your cards stay up to date by themselves.</p>
-<p class="panel-sub">On the server: your name and your card (titles, scores, statuses, favorites, tags). Never your notes, dates or keys. Only the friends you accepted see your card. A card that isn't updated for 5 months is erased.</p>
+<p class="panel-sub">On the server: your name and your card (titles, scores, statuses, favorites, tags). Never your notes, dates or keys. Only the friends you accepted see your card; Sonny, who runs the server, can see what's stored there. A card that isn't updated for 5 months is erased.</p>
 <div class="actions"><button type="button" class="btn btn-ghost" data-action="live-move">${icon.upload}Move my name to another device</button><button type="button" class="btn btn-ghost btn-danger" data-action="live-leave">Remove my name and card</button></div>
 ${server}`;
   }
@@ -805,8 +809,8 @@ ${server}`;
 <label class="field"><span class="label">Invite code</span><input id="live-invite" name="invite" class="input" maxlength="80" autocomplete="off" spellcheck="false" autocapitalize="off"></label>
 <div class="actions"><button type="submit" class="btn btn-primary">Create my name</button></div>
 </form>
-<p class="panel-sub">3 to 24 letters or numbers (. _ - inside). On the server: your name and your card (titles, scores, statuses, favorites, tags), never your notes, dates or keys. Only the friends you accept see your card.</p>
-<details class="set-more"><summary>Move my name here</summary><form class="live-here" data-form="live-here" autocomplete="off"><label class="field"><span class="label">Code from your other device</span><input id="live-code" name="movecode" class="input" placeholder="RW1.…" autocomplete="off" spellcheck="false" autocapitalize="off"></label><div class="actions"><button type="submit" class="btn btn-ghost">Move it here</button></div></form><span class="panel-sub">Your other device: Settings → Friends → Move my name to another device.</span></details>
+<p class="panel-sub">3 to 24 letters or numbers (. _ - inside). On the server: your name and your card (titles, scores, statuses, favorites, tags), never your notes, dates or keys. Only the friends you accept see your card; Sonny, who runs the server, can see what's stored there.</p>
+<details class="set-more"><summary>Move my name here</summary><form class="live-here" data-form="live-here" autocomplete="off"><label class="field"><span class="label">Code from your other device</span><input id="live-code" name="movecode" class="input" placeholder="RW2.…" autocomplete="off" spellcheck="false" autocapitalize="off"></label><div class="actions"><button type="submit" class="btn btn-ghost">Move it here</button></div></form><span class="panel-sub">Your other device: Settings → Friends → Move my name to another device.</span></details>
 ${server}`;
 }
 
@@ -1225,7 +1229,7 @@ export function scanResults(scan, titles) {
   return `${notes}<ul class="scan-list">${scan.results.map((r) => {
     const mine = titles.find((t) => !t.deletedAt && t.id !== scan.linkId && (r.type === 'game' ? t.rawgId === r.id : t.tmdbId === r.id && t.tmdbType === r.type));
     const sub = [M.KIND_LABEL[r.kind], r.year, r.original].filter(Boolean).join(' · ');
-    return `<li><button type="button" class="scan-item" data-action="scan-pick" data-type="${r.type}" data-id="${r.id}"${mine ? ` data-open="${esc(mine.id)}"` : ''}>
+    return `<li><button type="button" class="scan-item" data-action="scan-pick" data-type="${esc(r.type)}" data-id="${Number(r.id) || 0}"${mine ? ` data-open="${esc(mine.id)}"` : ''}>
 <span class="scan-thumb" style="background:${M.artFor({ title: r.title })}" aria-hidden="true">${r.poster ? `<img src="${esc(r.poster)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}</span>
 <span class="scan-info"><span class="scan-title">${esc(r.title)}</span><span class="scan-sub">${esc(sub)}</span></span>${mine ? '<span class="tag-soft">In your list</span>' : ''}
 </button></li>`;
@@ -1311,7 +1315,7 @@ function importChange(it, state) {
   const list = imp.changeResults || it.candidates || [];
   return `<div class="imp-change">
 <div class="search">${icon.search}<label class="sr" for="imp-q">Search for ${esc(it.title)}</label><input id="imp-q" type="search" value="${esc(imp.changeQuery)}" data-imp-q="${it.id}" autocomplete="off" spellcheck="false"></div>
-${imp.changeLoading ? '<p class="scan-hint">Searching…</p>' : list.length ? `<ul class="scan-list">${list.map((r) => `<li><button type="button" class="scan-item" data-action="imp-pick" data-id="${it.id}" data-type="${r.type}" data-rid="${r.id}"><span class="scan-thumb" style="background:${M.artFor({ title: r.title })}" aria-hidden="true">${r.poster ? `<img src="${esc(r.poster)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}</span><span class="scan-info"><span class="scan-title">${esc(r.title)}</span><span class="scan-sub">${esc([M.KIND_LABEL[r.kind], r.year, r.original].filter(Boolean).join(' · '))}</span></span></button></li>`).join('')}</ul>` : '<p class="scan-hint">Nothing found. Try another spelling.</p>'}
+${imp.changeLoading ? '<p class="scan-hint">Searching…</p>' : list.length ? `<ul class="scan-list">${list.map((r) => `<li><button type="button" class="scan-item" data-action="imp-pick" data-id="${it.id}" data-type="${esc(r.type)}" data-rid="${Number(r.id) || 0}"><span class="scan-thumb" style="background:${M.artFor({ title: r.title })}" aria-hidden="true">${r.poster ? `<img src="${esc(r.poster)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}</span><span class="scan-info"><span class="scan-title">${esc(r.title)}</span><span class="scan-sub">${esc([M.KIND_LABEL[r.kind], r.year, r.original].filter(Boolean).join(' · '))}</span></span></button></li>`).join('')}</ul>` : '<p class="scan-hint">Nothing found. Try another spelling.</p>'}
 <div class="actions"><button type="button" class="btn btn-ghost btn-sm" data-action="imp-nomatch" data-id="${it.id}">No match: add it by hand</button><button type="button" class="btn btn-ghost btn-sm" data-action="imp-change" data-id="${it.id}">Done</button></div>
 </div>`;
 }

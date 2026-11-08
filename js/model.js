@@ -1,6 +1,6 @@
 // Rewinder — data helpers. Pure functions: no DOM, no storage.
 
-export const APP_VERSION = '1.10.0';
+export const APP_VERSION = '1.10.1';
 
 export const KINDS = ['movie', 'tv', 'anime', 'game'];
 export const KIND_LABEL = { movie: 'Movie', tv: 'TV Show', anime: 'Anime', game: 'Game' };
@@ -48,6 +48,8 @@ export const DEFAULT_SETTINGS = {
   server: '',
   liveName: '',
   liveSecret: '',
+  // The server your name and secret belong to: they are never sent anywhere else.
+  liveHost: '',
   liveSig: '',
   liveAt: null
 };
@@ -258,12 +260,12 @@ export function normalizeTitle(raw) {
     views: Array.isArray(r.views) ? r.views.map((v) => seenDate(v && v.date)).filter(Boolean).map((date) => ({ date })) : [],
     platforms: strList(r.platforms, 12),
     game: { story: markDate(r.game && r.game.story), full: markDate(r.game && r.game.full) },
-    seasons: Array.isArray(r.seasons) ? r.seasons.map((s, i) => ({
+    seasons: Array.isArray(r.seasons) ? r.seasons.slice(0, 300).map((s, i) => ({
       n: Number.isInteger(Number(s && s.n)) ? Number(s.n) : i + 1,
       year: s && s.year ? String(s.year).slice(0, 4) : '',
       score: s && typeof s.score === 'number' ? clampScore(s.score) : null,
       notes: String((s && s.notes) || '').slice(0, 10000),
-      episodes: Array.isArray(s && s.episodes) ? s.episodes.map((e, j) => ({
+      episodes: Array.isArray(s && s.episodes) ? s.episodes.slice(0, 5000).map((e, j) => ({
         n: Number.isInteger(Number(e && e.n)) ? Number(e.n) : j + 1,
         title: String((e && e.title) || '').slice(0, 300),
         aired: dayOrNull(e && e.aired) || '',
@@ -281,7 +283,7 @@ export function normalizeTitle(raw) {
       return {
         name: (source === 'tmdb' ? cleanProvider(p.name) : String(p.name)).slice(0, 60),
         source,
-        url: typeof p.url === 'string' && /^https:\/\/[\w.-]+\.[a-z]{2,}\//i.test(p.url) ? p.url.slice(0, 500) : ''
+        url: source === 'rawg' ? storeLink(p.url) : ''
       };
     }).filter((p, i, all) => p.name && all.findIndex((q) => q.name.toLowerCase() === p.name.toLowerCase()) === i) : [],
     newSeason: Number.isInteger(r.newSeason) ? r.newSeason : null,
@@ -448,7 +450,7 @@ export function heroArt(t, hue) {
 
 // "Paramount Plus Premium" and "Paramount+ Amazon Channel" are the same service: one name per service.
 export function cleanProvider(name) {
-  let n = String(name || '').trim()
+  let n = String(name || '').slice(0, 100).trim()
     .replace(/\s+(Basic|Standard)?\s*with Ads$/i, '')
     .replace(/\s+(Premium|Essential|Basic|Standard|Ad[- ]Free)$/i, '')
     .replace(/\s+(Amazon|Apple TV|Roku Premium)\s+Channel$/i, '')
@@ -457,6 +459,23 @@ export function cleanProvider(name) {
   if (/^Amazon Prime Video/i.test(n)) n = 'Prime Video';
   if (/^Netflix/i.test(n)) n = 'Netflix';
   return n;
+}
+
+// A store link only ever opens the store itself. A link anywhere else is dropped (the chip stays, without the link).
+const STORE_SITES = ['steampowered.com', 'gog.com', 'playstation.com', 'xbox.com', 'nintendo.com', 'epicgames.com', 'itch.io'];
+const STORE_HOSTS = ['apps.apple.com', 'itunes.apple.com', 'play.google.com', 'www.microsoft.com', 'apps.microsoft.com'];
+export function storeLink(url) {
+  if (typeof url !== 'string' || url.length > 500) return '';
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return '';
+  }
+  if (u.protocol !== 'https:' || u.username || u.password || u.port) return '';
+  const host = u.hostname.toLowerCase();
+  const ok = STORE_HOSTS.includes(host) || STORE_SITES.some((d) => host === d || host.endsWith('.' + d));
+  return ok ? u.href : '';
 }
 
 export const MAKER_ROLES = ['Director', 'Creator', 'Studio'];
@@ -559,7 +578,7 @@ export function mergeScan(t, s) {
 
 export function mergeProviders(t, s) {
   const source = s.source === 'rawg' ? 'rawg' : 'tmdb';
-  const scanned = s.providers.map((p) => ({ name: p.name, source, url: p.url || '' }));
+  const scanned = s.providers.map((p) => ({ name: p.name, source, url: source === 'rawg' ? storeLink(p.url) : '' }));
   const mine = t.providers.filter((p) => p.source === 'manual' && !scanned.some((n) => n.name.toLowerCase() === p.name.toLowerCase()));
   t.providers = [...scanned, ...mine];
   if (source === 'tmdb') t.watchLink = s.watchLink || '';
@@ -638,6 +657,7 @@ export function makeCard(titles, { id, name }) {
     id,
     name,
     at: new Date().toISOString(),
+    // Always in the same order: the same list makes the same card (and the same fingerprint) after every reload.
     titles: live(titles).map((t) => {
       const score = effectiveScore(t);
       return {
@@ -648,9 +668,10 @@ export function makeCard(titles, { id, name }) {
         tags: t.tags || [],
         poster: t.poster || ''
       };
-    })
+    }).sort((a, b) => cardOrder(a).localeCompare(cardOrder(b)))
   };
 }
+const cardOrder = (x) => `${x.kind}|${x.tmdb || ''}|${x.rawg || ''}|${x.title}|${x.year || ''}`;
 
 // A short fingerprint of what your card says: it changes when a title, score, status, favorite or tag does.
 export function cardSignature(titles, name) {
@@ -668,7 +689,8 @@ export const isCard = (d) => Boolean(d && d.app === 'rewinder' && d.kind === 'ca
 export function normalizeCard(d) {
   const at = typeof d.at === 'string' && !Number.isNaN(Date.parse(d.at)) ? new Date(d.at).toISOString() : new Date().toISOString();
   return {
-    id: typeof d.id === 'string' && /^[\w-]{6,64}$/.test(d.id) ? d.id : 'card-' + uid(),
+    // live-…: kept for the friends added by name. A card file never takes one.
+    id: typeof d.id === 'string' && /^[\w-]{6,64}$/.test(d.id) && !d.id.startsWith('live-') ? d.id : 'card-' + uid(),
     name: String(d.name || '').trim().slice(0, 40) || 'A friend',
     at,
     titles: d.titles.slice(0, 5000).filter((x) => x && typeof x.title === 'string' && x.title.trim()).map((x) => ({

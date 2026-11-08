@@ -70,20 +70,22 @@ export const publish = (base, auth, card) => call(base, '/v1/card', { method: 'P
 export const cardOf = (base, auth, name, etag) => call(base, '/v1/card/' + encodeURIComponent(name), { auth, etag, ms: 30000 });
 // what: request, accept, decline, cancel or unfriend.
 export const tell = (base, auth, what, name) => call(base, '/v1/' + what, { method: 'POST', auth, body: { name } });
-export const move = (base, auth, secret) => call(base, '/v1/move', { method: 'POST', auth, body: { secret } });
+// Moving your name: the old device asks for a one-time code (15 minutes); the new one trades it for its own secret.
+export const transfer = (base, auth) => call(base, '/v1/transfer', { method: 'POST', auth });
+export const move = (base, code, secret) => call(base, '/v1/move', { method: 'POST', body: { code, secret } });
 export const leave = (base, auth) => call(base, '/v1/me', { method: 'DELETE', auth });
 
-// One line that carries your name to your other device. It works once: that device gets a new secret right away.
-export const moveCode = (base, auth) => 'RW1.' + b64url(new TextEncoder().encode(JSON.stringify({ v: base, n: auth.name, s: auth.secret })));
+// One line to paste on your other device: the server, your name and the one-time code. Never your secret.
+export const moveCode = (base, name, code) => 'RW2.' + b64url(new TextEncoder().encode(JSON.stringify({ v: base, n: name, c: code })));
 
 export function readMoveCode(text) {
-  const m = String(text || '').match(/RW1\.([A-Za-z0-9_-]{20,2000})/);
+  const m = String(text || '').match(/RW2\.([A-Za-z0-9_-]{20,2000})/);
   if (!m) return null;
   try {
     const o = JSON.parse(fromB64url(m[1]));
     const base = cleanBase(o.v);
-    if (!base || typeof o.n !== 'string' || !NAME.test(o.n) || typeof o.s !== 'string' || !/^[A-Za-z0-9_-]{32,128}$/.test(o.s)) return null;
-    return { base, name: o.n, secret: o.s };
+    if (!base || typeof o.n !== 'string' || !NAME.test(o.n) || typeof o.c !== 'string' || !/^[A-Za-z0-9_-]{32,128}$/.test(o.c)) return null;
+    return { base, name: o.n, code: o.c };
   } catch {
     return null;
   }

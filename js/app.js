@@ -10,6 +10,12 @@ import * as S from './server.js';
 import { esc } from './ui.js';
 import { morphChildren } from './morph.js';
 
+// Rewinder never runs inside another site's page: a frame could trick clicks (remove a friend, erase a name).
+if (window.top !== window.self) {
+  document.documentElement.innerHTML = '<body style="font:16px sans-serif;padding:24px;color:#ccc;background:#0d0f0f">Rewinder only opens in its own window.</body>';
+  throw new Error('Rewinder refuses to run in a frame.');
+}
+
 const root = document.getElementById('root');
 const dlg = document.getElementById('dlg');
 const toastBox = document.getElementById('toasts');
@@ -113,6 +119,7 @@ function render() {
   state.ui.focusAfter = null;
   state.ui.cardStale = state.ready && !state.error ? cardStale() : false;
   state.liveServer = liveBase();
+  state.liveServerFixed = Boolean(S.cleanBase(S.DEFAULT_SERVER)) && !state.settings.server;
 
   root.classList.toggle('spoiler-on', Boolean(state.settings.spoiler));
   root.classList.toggle('scan-off', !state.settings.scanlines);
@@ -172,7 +179,7 @@ function parseRoute() {
   if (!parts.length) return { name: 'home' };
   if (parts[0] === 'list') return { name: 'list' };
   if (parts[0] === 'all') return { name: 'browse', kind: 'all' };
-  if (M.PATH_KIND[parts[0]]) return { name: 'browse', kind: M.PATH_KIND[parts[0]] };
+  if (Object.hasOwn(M.PATH_KIND, parts[0])) return { name: 'browse', kind: M.PATH_KIND[parts[0]] };
   if (parts[0] === 'title' && parts[1]) return { name: 'title', id: parts[1] };
   if (parts[0] === 'settings') return { name: 'settings' };
   if (parts[0] === 'import') return { name: 'import' };
@@ -1160,7 +1167,7 @@ function closeDateEdit() {
   state.ui.dateEdit = null;
   state.ui.focusAfter = null;
   render();
-  const back = document.querySelector(`[data-action="date-edit"][data-key="${key}"]`);
+  const back = document.querySelector(`[data-action="date-edit"][data-key="${CSS.escape(key)}"]`);
   if (back) back.focus();
   return true;
 }
@@ -2202,7 +2209,13 @@ const friendById = (id) => state.friends.find((f) => f.id === id) || null;
 async function loadFriends() {
   let saved = null;
   try { saved = await store.getMeta('friends'); } catch { saved = null; }
-  return (Array.isArray(saved) ? saved : []).filter((f) => f && Array.isArray(f.titles)).map((f) => ({ ...M.normalizeCard(f), loadedAt: f.loadedAt || null, live: typeof f.live === 'string' && S.NAME.test(f.live) ? f.live : null }));
+  const seen = new Set();
+  return (Array.isArray(saved) ? saved : []).filter((f) => f && Array.isArray(f.titles)).map((f) => {
+    const live = typeof f.live === 'string' && S.NAME.test(f.live) ? f.live : null;
+    const card = { ...M.normalizeCard(f), loadedAt: f.loadedAt || null, live, alias: live && typeof f.alias === 'string' ? f.alias.trim().slice(0, 40) : '' };
+    if (live) Object.assign(card, { name: live, id: liveId(live) });
+    return card;
+  }).filter((f) => !seen.has(f.id) && seen.add(f.id));
 }
 
 async function saveFriends() {
@@ -2325,7 +2338,7 @@ function acquired(f, c, replaced) {
 async function addCard(raw) {
   const card = { ...M.normalizeCard(raw), loadedAt: new Date().toISOString() };
   if (card.id === state.settings.cardId) { toast('That is your own card.'); return; }
-  const i = state.friends.findIndex((f) => f.id === card.id);
+  const i = state.friends.findIndex((f) => !f.live && f.id === card.id);
   if (i >= 0 && Date.parse(state.friends[i].at) > Date.parse(card.at)) {
     toast(`You already have a newer card from ${state.friends[i].name}.`);
     return;
@@ -2412,17 +2425,25 @@ function toggleFriends(open) {
 /* ---------- friends by name ---------- */
 
 const liveBase = () => S.cleanBase(state.settings.server) || S.cleanBase(S.DEFAULT_SERVER);
-const liveAuth = () => (state.settings.liveName && state.settings.liveSecret ? { name: state.settings.liveName, secret: state.settings.liveSecret } : null);
+// Your name and secret go only to the server they were made on. Point Rewinder at another server (by mistake, or
+// because someone told you to) and it has nothing to send there.
+function liveAuth() {
+  const s = state.settings;
+  if (!s.liveName || !s.liveSecret || !s.liveHost || s.liveHost !== liveBase()) return null;
+  return { name: s.liveName, secret: s.liveSecret };
+}
 function liveOn() {
   return Boolean(liveBase() && liveAuth());
 }
 const sameName = (a, b) => String(a || '').toLowerCase() === String(b || '').toLowerCase();
+// A live friend's card is filed under their Rewinder name, never under the id the card itself claims.
+const liveId = (name) => 'live-' + String(name).toLowerCase();
 
 // The server no longer knows this device: the name moved to another one, or was removed.
 function liveFailed(err) {
   if (!err || err.status !== 401) return false;
   const name = state.settings.liveName;
-  Object.assign(state.settings, { liveName: '', liveSecret: '', liveSig: '', liveAt: null });
+  Object.assign(state.settings, { liveName: '', liveSecret: '', liveHost: '', liveSig: '', liveAt: null });
   state.live = { incoming: [], outgoing: [], friends: [], checkedAt: 0, error: '' };
   saveSettings();
   render();
@@ -2440,29 +2461,40 @@ function liveCard() {
 // card nobody refreshes for 5 months).
 let publishTimer = null;
 let publishing = null;
+let lastPut = 0;
+const PUT_GAP = 11000;
 function publishSoon(ms = 20000) {
   if (!liveOn()) return;
   clearTimeout(publishTimer);
-  publishTimer = setTimeout(() => { publishNow().catch((err) => console.warn('Could not send your card', err)); }, ms);
+  publishTimer = setTimeout(() => {
+    publishTimer = null;
+    publishNow().catch((err) => console.warn('Could not send your card', err));
+  }, ms);
 }
 
 async function publishNow(force = false) {
   if (!liveOn() || !state.ready) return;
   if (publishing) return publishing;
   clearTimeout(publishTimer);
+  publishTimer = null;
   flushSaves();
   const { card, sig } = liveCard();
   const month = 30 * 24 * 3600e3;
   if (!force && sig === state.settings.liveSig && state.settings.liveAt && Date.now() - Date.parse(state.settings.liveAt) < month) return;
+  // The server takes one card every 10 seconds: a change right after the last one waits its turn.
+  const wait = lastPut + PUT_GAP - Date.now();
+  if (wait > 0) { publishSoon(wait); return; }
   publishing = (async () => {
     try {
       const { data } = await S.publish(liveBase(), liveAuth(), card);
+      lastPut = Date.now();
       state.settings.liveSig = sig;
       state.settings.liveAt = (data && data.at) || new Date().toISOString();
       await saveSettings();
       requestRender();
     } catch (err) {
-      if (!liveFailed(err)) {
+      if (err && err.code === 'slow-down') publishSoon(12000);
+      else if (!liveFailed(err)) {
         state.live.error = err.message;
         requestRender();
       }
@@ -2484,7 +2516,13 @@ async function liveRefresh(force = false) {
     const auth = liveAuth();
     try {
       const { data } = await S.whoami(base, auth);
-      state.live = { ...state.live, incoming: data.incoming || [], outgoing: data.outgoing || [], friends: data.friends || [], checkedAt: Date.now(), error: '' };
+      // Whatever a server says, only real Rewinder names get in.
+      const names = (v) => (Array.isArray(v) ? v.filter((n) => typeof n === 'string' && S.NAME.test(n)).slice(0, 200) : []);
+      const friends = (Array.isArray(data && data.friends) ? data.friends : [])
+        .filter((f) => f && typeof f.name === 'string' && S.NAME.test(f.name))
+        .map((f) => ({ name: f.name, at: typeof f.at === 'string' && !Number.isNaN(Date.parse(f.at)) ? new Date(f.at).toISOString() : null }))
+        .slice(0, 200);
+      state.live = { ...state.live, incoming: names(data && data.incoming), outgoing: names(data && data.outgoing), friends, checkedAt: Date.now(), error: '' };
       let changed = false;
       for (const fr of state.live.friends) {
         const mine = state.friends.find((f) => f.live && sameName(f.live, fr.name));
@@ -2499,9 +2537,11 @@ async function liveRefresh(force = false) {
           throw err;
         }
         if (got.unchanged || !got.data || !M.isCard(got.data)) continue;
-        const card = { ...M.normalizeCard(got.data), loadedAt: new Date().toISOString(), live: fr.name };
-        if (card.id === state.settings.cardId) continue;
-        const i = state.friends.findIndex((f) => (f.live && sameName(f.live, fr.name)) || f.id === card.id);
+        // A card's name is free text (anyone can write "Sonny"): a live friend shows under their Rewinder name.
+        const raw = M.normalizeCard(got.data);
+        const card = { ...raw, id: liveId(fr.name), name: fr.name, alias: sameName(raw.name, fr.name) ? '' : raw.name, loadedAt: new Date().toISOString(), live: fr.name };
+        if (sameName(fr.name, state.settings.liveName)) continue;
+        const i = state.friends.findIndex((f) => f.live && sameName(f.live, fr.name));
         if (i >= 0) state.friends[i] = card;
         else state.friends.push(card);
         changed = true;
@@ -2527,8 +2567,10 @@ async function createName(form) {
   if (!invite) { toast('Type the invite code Sonny gave you.'); return; }
   const secret = S.newSecret();
   try {
-    const { data } = await S.claim(liveBase(), name, invite, secret);
-    Object.assign(state.settings, { liveName: data.name, liveSecret: secret, liveSig: '', liveAt: null });
+    const base = liveBase();
+    const { data } = await S.claim(base, name, invite, secret);
+    if (!data || typeof data.name !== 'string' || !S.NAME.test(data.name)) throw new S.LiveError('The server sent back a name Rewinder cannot use.', 'bad-name');
+    Object.assign(state.settings, { liveName: data.name, liveSecret: secret, liveHost: base, liveSig: '', liveAt: null });
     if (!state.settings.cardName) state.settings.cardName = data.name;
     await saveSettings();
   } catch (err) {
@@ -2571,26 +2613,42 @@ async function answerRequest(what, name) {
   await liveRefresh(true);
 }
 
-function showMoveCode() {
+async function showMoveCode() {
   if (!liveOn()) return;
-  openDialog(V.moveCodeDialog(S.moveCode(liveBase(), liveAuth()), state.settings.liveName), '#move-code', 'dlg-move');
+  let data;
+  try {
+    ({ data } = await S.transfer(liveBase(), liveAuth()));
+  } catch (err) {
+    if (!liveFailed(err)) toast(err.message);
+    return;
+  }
+  openDialog(V.moveCodeDialog(S.moveCode(liveBase(), state.settings.liveName, data.code), state.settings.liveName), '#move-code', 'dlg-move');
 }
 
 async function moveHere(form) {
   const got = S.readMoveCode(form.elements.movecode ? form.elements.movecode.value : '');
   if (!got) { toast('That is not a Rewinder name code. Copy the whole line from your other device.'); return; }
+  // A code never switches servers: someone could send you one that points at theirs.
+  if (got.base !== liveBase()) { toast('That code is for another Rewinder server. It was not used.'); return; }
+  if (liveOn()) { toast(`This device is already ${state.settings.liveName}.`); return; }
+  const ok = await ask({ title: `Become ${got.name} here?`, body: `Only use a code you made yourself, on your other device. ${got.name}'s friends will see this device's list.`, yes: 'Move it here' });
+  if (!ok) return;
   const secret = S.newSecret();
+  let name;
   try {
-    await S.move(got.base, { name: got.name, secret: got.secret }, secret);
+    const { data } = await S.move(got.base, got.code, secret);
+    name = data && typeof data.name === 'string' && S.NAME.test(data.name) ? data.name : '';
   } catch (err) {
-    toast(err.status === 401 ? 'That code was already used, or the name was removed.' : err.message);
+    toast(err.code === 'bad-code' ? 'That code was already used, or it expired (15 minutes). Made it just now? Wait a minute, then try again.' : err.message);
     return;
   }
-  Object.assign(state.settings, { liveName: got.name, liveSecret: secret, liveSig: '', liveAt: null, server: got.base === S.cleanBase(S.DEFAULT_SERVER) ? '' : got.base });
-  if (!state.settings.cardName) state.settings.cardName = got.name;
+  // The code said one name and the server another: someone made that code to fool you. It is not used.
+  if (!name || !sameName(name, got.name)) { toast(`That code was not really for ${got.name}. It was not used.`, { timeout: 9000 }); return; }
+  Object.assign(state.settings, { liveName: name, liveSecret: secret, liveHost: got.base, liveSig: '', liveAt: null });
+  if (!state.settings.cardName) state.settings.cardName = name;
   await saveSettings();
   render();
-  toast(`${got.name} now lives on this device. Your other device no longer shares your card.`, { timeout: 9000 });
+  toast(`${name} now lives on this device. Your other device no longer shares your card.`, { timeout: 9000 });
   await publishNow(true);
   await liveRefresh(true);
 }
@@ -2606,7 +2664,7 @@ async function leaveServer() {
     if (!liveFailed(err)) toast(err.message);
     return;
   }
-  Object.assign(state.settings, { liveName: '', liveSecret: '', liveSig: '', liveAt: null });
+  Object.assign(state.settings, { liveName: '', liveSecret: '', liveHost: '', liveSig: '', liveAt: null });
   state.live = { incoming: [], outgoing: [], friends: [], checkedAt: 0, error: '' };
   state.friends = state.friends.filter((f) => !f.live);
   await saveFriends();
@@ -3077,7 +3135,7 @@ document.addEventListener('click', (e) => {
   }
   const el = e.target.closest('[data-action]');
   if (!el || el.disabled) return;
-  const fn = actions[el.dataset.action];
+  const fn = Object.hasOwn(actions, el.dataset.action) ? actions[el.dataset.action] : null;
   if (!fn) return;
   e.preventDefault();
   Promise.resolve().then(() => fn(el, e)).catch(fail);
@@ -3258,7 +3316,7 @@ const forms = {
 
 document.addEventListener('submit', (e) => {
   const form = e.target;
-  const fn = forms[form.dataset.form];
+  const fn = Object.hasOwn(forms, form.dataset.form) ? forms[form.dataset.form] : null;
   if (!fn) return;
   e.preventDefault();
   Promise.resolve().then(() => fn(form)).catch(fail);

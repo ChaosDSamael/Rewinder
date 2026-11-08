@@ -136,20 +136,25 @@ function watchCA(wp) {
   return { names: names.slice(0, 12), link };
 }
 
-function seasonFrom(s) {
+// n: the season number we asked for (already checked), not whatever came back.
+function seasonFrom(s, n) {
   return {
-    n: s.season_number,
+    n,
     year: String(s.air_date || '').slice(0, 4),
-    episodes: (s.episodes || [])
-      .filter((e) => e && Number.isInteger(e.episode_number))
-      .map((e) => ({ n: e.episode_number, title: String(e.name || '').trim(), aired: day(e.air_date), tba: !day(e.air_date) }))
+    episodes: (Array.isArray(s.episodes) ? s.episodes : [])
+      .filter((e) => e && Number.isInteger(e.episode_number) && e.episode_number >= 0)
+      .slice(0, 5000)
+      .map((e) => ({ n: e.episode_number, title: String(e.name || '').trim().slice(0, 300), aired: day(e.air_date), tba: !day(e.air_date) }))
   };
 }
+
+// A TMDB id is a whole number above zero; anything else is dropped.
+const goodId = (n) => Number.isInteger(n) && n > 0;
 
 export async function search(query, key, signal) {
   const data = await get('/search/multi', { query, include_adult: 'false', language: 'en-US', page: '1' }, key, signal, SEARCH_MS);
   return (data.results || [])
-    .filter((r) => r && (r.media_type === 'movie' || r.media_type === 'tv'))
+    .filter((r) => r && goodId(r.id) && (r.media_type === 'movie' || r.media_type === 'tv'))
     .slice(0, 12)
     .map((r) => {
       const type = r.media_type;
@@ -174,7 +179,7 @@ export async function searchKind(query, kind, year, key, signal) {
   if (year) params[movie ? 'year' : 'first_air_date_year'] = String(year);
   const data = await get(movie ? '/search/movie' : '/search/tv', params, key, signal, SEARCH_MS);
   const type = movie ? 'movie' : 'tv';
-  return (data.results || []).filter(Boolean).slice(0, 8).map((r) => {
+  return (data.results || []).filter((r) => r && goodId(r.id)).slice(0, 8).map((r) => {
     const title = mainTitle(r, type);
     const original = String((movie ? r.original_title : r.original_name) || '').trim();
     return {
@@ -233,7 +238,7 @@ export async function fetchTitle(type, id, key, onStep) {
     const watch = watchCA(d['watch/providers']);
     return {
       source: 'tmdb',
-      tmdbId: d.id,
+      tmdbId: goodId(d.id) ? d.id : Number(id),
       tmdbType: 'movie',
       kind: 'movie',
       original: String(d.original_title || '').trim(),
@@ -263,7 +268,7 @@ export async function fetchTitle(type, id, key, onStep) {
     const part = await get(`/tv/${id}`, { language: 'en-US', append_to_response: batch.map((n) => `season/${n}`).join(',') }, key);
     for (const n of batch) {
       const s = part[`season/${n}`] || await get(`/tv/${id}/season/${n}`, { language: 'en-US' }, key).catch(() => null);
-      if (s) seasons.push(seasonFrom(s));
+      if (s && typeof s === 'object') seasons.push(seasonFrom(s, n));
     }
   }
   const title = mainTitle(d, 'tv');
@@ -275,7 +280,7 @@ export async function fetchTitle(type, id, key, onStep) {
     .map((c) => ({ name: c.name, role: (c.roles && c.roles[0] && c.roles[0].character) || '' }));
   return {
     source: 'tmdb',
-    tmdbId: d.id,
+    tmdbId: goodId(d.id) ? d.id : Number(id),
     tmdbType: 'tv',
     original: String(d.original_name || '').trim(),
     kind: kindOf('tv', (d.genres || []).map((g) => g.id), d.original_language, d.origin_country),

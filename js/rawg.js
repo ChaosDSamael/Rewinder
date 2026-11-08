@@ -1,5 +1,6 @@
 // Rewinder — games, from RAWG. Your own key, straight from your browser.
 import { ScanError, timed } from './tmdb.js';
+import { storeLink } from './model.js';
 
 const API = 'https://api.rawg.io/api';
 
@@ -109,7 +110,8 @@ export async function fetchGame(id, key) {
   try {
     const stores = await get(`/games/${id}/stores`, {}, key);
     for (const s of stores.results || []) {
-      if (s && typeof s.url === 'string' && s.url.startsWith('https://')) links[s.store_id] = s.url;
+      const url = storeLink(s && s.url);
+      if (url) links[s.store_id] = url;
     }
   } catch {
     links = {};
@@ -125,7 +127,7 @@ export async function fetchGame(id, key) {
   const slug = typeof g.slug === 'string' && /^[a-z0-9-]+$/.test(g.slug) ? g.slug : '';
   return {
     source: 'rawg',
-    rawgId: g.id,
+    rawgId: Number.isInteger(g.id) && g.id > 0 ? g.id : Number(id),
     rawgSlug: slug,
     kind: 'game',
     title: String(g.name || 'Untitled').trim(),

@@ -91,21 +91,49 @@ Rien à installer sur la TV, pas d'inscription : tu montres ton écran dessus, p
 - **Settings → Friends** : choisis ton nom Rewinder (3 à 24 lettres ou chiffres, `. _ -` permis au milieu) avec le code d'invitation que Sonny t'a donné. Premier arrivé, premier servi.
 - **Friends → Add a friend by name** : ton ami reçoit une demande (un point sur **Friends**). Quand il dit **Accept**, vous voyez vos cartes l'un l'autre, pis elles se mettent à jour toutes seules : ta carte part environ 20 secondes après ton dernier changement, pis celle de tes amis arrive quand tu ouvres Rewinder ou **Friends**.
 - Sur le serveur : ton nom pis ta carte (titres, scores, statuts, favoris, tags). Jamais tes notes, tes dates ou tes clés. Seulement les amis que tu as acceptés voient ta carte. Une carte pas mise à jour depuis 5 mois est effacée (règle de TMDB : rien de gardé plus de 6 mois).
-- Ton nom vit sur un appareil à la fois (chaque appareil a sa propre liste). **Move my name to another device** donne un code à coller sur l'autre appareil (**Move my name here**) : le code marche une seule fois, pis l'ancien appareil arrête de partager.
+- Ton nom vit sur un appareil à la fois (chaque appareil a sa propre liste). **Move my name to another device** donne un code à coller sur l'autre appareil (**Move my name here**) : le code marche une seule fois, pendant 15 minutes, pis l'ancien appareil arrête de partager.
 - **Remove** sur la page d'un ami : vous arrêtez de voir vos cartes. **Remove my name and card** efface tout sur le serveur.
 - Les cartes en fichier marchent encore : **Send my card as a file** pis **Add a card file**.
 
 ### Le serveur (une fois, pour Sonny)
 
-Un Cloudflare Worker gratuit (`server/worker.js`) avec un espace KV. Gratuit jusqu'à 100 000 lectures pis 1 000 écritures par jour, en masse pour une gang d'amis.
+Un Cloudflare Worker gratuit (`server/worker.js`) avec une base de données D1. Gratuit jusqu'à 5 millions de lectures pis 100 000 écritures par jour, en masse pour une gang d'amis.
 
 1. Crée un compte gratuit sur [dash.cloudflare.com](https://dash.cloudflare.com/sign-up).
 2. **Workers & Pages → Create → Start with Hello World** : nomme-le `rewinder`, puis **Deploy**.
 3. **Edit code** : remplace tout par le contenu de `server/worker.js`, puis **Deploy**.
-4. **Storage & Databases → KV → Create** : nomme-le `rewinder-cards`.
-5. Ton worker → **Bindings → Add binding → KV namespace** : nom de variable `CARDS`, espace `rewinder-cards`.
-6. Ton worker → **Settings → Variables and Secrets → Add** : type **Secret**, nom `INVITE`, valeur = ton code d'invitation. **Deploy**.
-7. L'adresse `https://rewinder.<ton-sous-domaine>.workers.dev` va dans `DEFAULT_SERVER` (`js/server.js`) pour tout le monde, ou dans **Settings → Friends → Server address** pour essayer.
+4. **Storage & Databases → D1 SQL Database → Create Database** : nomme-la `rewinder`.
+5. Ton worker → **Bindings → Add binding → D1 database** : nom de variable `DB`, base `rewinder`.
+6. Ton worker → **Settings → Variables and Secrets → Add** : type **Secret**, nom `INVITE`, valeur = ton code d'invitation, **16 caractères ou plus**, au hasard (ex. `renard-orage-42-popcorn-lune`). En bas de 16, le serveur refuse de créer des noms. **Deploy**.
+7. L'adresse `https://rewinder.<ton-sous-domaine>.workers.dev` va dans `DEFAULT_SERVER` (`js/server.js`) pis dans `connect-src` (`index.html`) : après ça, personne n'a d'adresse à taper, pis Rewinder ne peut parler à aucun autre serveur. Pour essayer avant : **Settings → Friends → Server address**.
+
+Déjà fait avec KV (1.10.0) ? Remplace le code du worker (étape 3), fais les étapes 4 pis 5, change le code d'invitation pour 16 caractères ou plus. L'espace KV peut être effacé.
+
+## Sécurité
+
+Ce qui protège Rewinder pis tes amis :
+
+- Tout ce qui vient de l'extérieur (TMDB, RAWG, AniList, une carte d'ami, une copie de sauvegarde, le serveur) est affiché comme du texte, jamais exécuté. Un test bourre chaque champ de pièges à chaque version.
+- Une règle de sécurité (Content-Security-Policy) empêche tout script qui ne vient pas de Rewinder, pis les images d'ailleurs que TMDB ou RAWG. Rewinder refuse de s'ouvrir à l'intérieur d'une autre page.
+- Tes clés TMDB pis RAWG vont seulement chez TMDB pis RAWG. Elles ne vont jamais dans une copie de sauvegarde ni dans une carte. Une copie de sauvegarde ne peut pas changer tes clés, ton serveur ou tes couleurs.
+- Les liens vers les magasins (Steam, PlayStation, Xbox, Nintendo…) s'ouvrent seulement vers les vrais magasins. Un lien vers ailleurs est enlevé.
+- Ton nom Rewinder : ton appareil a un secret que le serveur ne garde jamais (juste son empreinte). Ce secret part seulement vers le serveur où ton nom a été créé : changer l'adresse du serveur ne l'envoie nulle part ailleurs.
+- Le code pour changer d'appareil ne contient jamais le secret, marche une fois, pis expire après 15 minutes. Rewinder montre le nom pis demande de confirmer avant de l'utiliser. Un code pour un autre serveur, ou un code qui ment sur le nom, est refusé.
+- Le serveur : il faut le code d'invitation pour se créer un nom. Une adresse qui se trompe de code 10 fois attend une heure, pis une adresse crée 5 noms par jour au maximum. Chaque changement est fait d'un coup (une transaction) : deux personnes sont amies des deux bords, ou pas pantoute. Une carte s'ouvre seulement si les deux ont dit oui. Une carte au plus aux 10 secondes, 1 Mo au maximum, 200 amis. Un nom effacé reste bloqué 7 jours, pour que personne le prenne tout de suite pis reçoive les demandes de quelqu'un d'autre.
+- Un ami « live » s'affiche sous son nom Rewinder, pas sous le nom libre de sa carte : personne ne peut se faire passer pour quelqu'un d'autre en écrivant « Sonny » sur sa carte. Sa carte ne peut pas non plus prendre la place de la carte d'un autre ami.
+
+Ce que toi tu dois faire (Sonny) :
+
+- Active la double authentification (2FA) sur **GitHub** pis sur **Cloudflare**. Quelqu'un qui prend ton GitHub peut changer le code que tous tes amis reçoivent à la prochaine mise à jour.
+- Garde le code d'invitation long pis au hasard, entre amis. S'il fuit, change le secret `INVITE` dans Cloudflare : les noms déjà créés continuent de marcher.
+- Ne publie pas d'autre site GitHub Pages sur le compte ChaosDSamael : tous les sites `chaosdsamael.github.io` partagent le même stockage dans le navigateur, donc un autre site pourrait lire les clés de Rewinder. Si un jour tu veux d'autres sites, déménage Rewinder sur son propre domaine.
+- Si tu changes l'adresse du serveur, change aussi `connect-src` dans `index.html`.
+
+Ce qui reste (connu, accepté) :
+
+- Quelqu'un de méchant peut inonder le serveur gratuit de requêtes. Cloudflare coupe à 100 000 requêtes par jour, pis ça repart le lendemain. Rien n'est perdu, les amis par fichier marchent encore.
+- Quelqu'un qui a le code d'invitation peut réserver des noms (5 par jour par adresse).
+- Toi (ou quelqu'un qui prend ton compte Cloudflare) peux lire les cartes sur le serveur. Jamais les notes, les dates ou les clés : elles n'y sont pas.
 
 ## Importer une liste
 

@@ -120,7 +120,8 @@ export function parseList(text) {
   const out = [];
   let blockStart = true;
   String(text || '').split(/\r?\n/).forEach((raw, i) => {
-    const line = raw.trim();
+    // A real line is short; a giant one could make the patterns below crawl.
+    const line = raw.slice(0, 400).trim();
     if (!line) {
       blockStart = true;
       return;
