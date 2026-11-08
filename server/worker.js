@@ -36,8 +36,9 @@ const MAX_SYNC = 1500000;
 const MAX_ITEM = 400000;
 const MAX_PUSH = 200;
 const USER_BYTES = 30000000;
-const PAGE = 50;
-const PAGE_BYTES = 2000000;
+// Pages stay small: the free plan gives a request 10 ms of computing.
+const PAGE = 40;
+const PAGE_BYTES = 400000;
 // The free plan stops a database at 500 MB: past 400 MB, lists stop growing so names, friends and cards keep working.
 const DB_FULL = 400000000;
 // A list no device synced for 5 months leaves the server, like a card (the devices keep theirs).
@@ -309,7 +310,11 @@ async function route(request, env, url, now) {
     if (!DEVICE_ID.test(id)) throw new Refusal(400, 'bad-device', 'That is not one of your devices.');
     await spend(env, me, now);
     // Never the last one: a name with no device could never be used again (remove the name instead).
-    const gone = await env.DB.prepare('DELETE FROM devices WHERE k = ?1 AND id = ?2 AND (SELECT COUNT(*) FROM devices WHERE k = ?1) > 1').bind(me.k, id).run();
+    // The codes waiting go too: a device taken away can't have made itself a way back in.
+    const [gone] = await env.DB.batch([
+      env.DB.prepare('DELETE FROM devices WHERE k = ?1 AND id = ?2 AND (SELECT COUNT(*) FROM devices WHERE k = ?1) > 1').bind(me.k, id),
+      env.DB.prepare('DELETE FROM tickets WHERE k = ?1').bind(me.k)
+    ]);
     if (!gone.meta.changes) {
       const there = await env.DB.prepare('SELECT 1 AS ok FROM devices WHERE k = ?1 AND id = ?2').bind(me.k, id).first();
       if (there) throw new Refusal(409, 'last-device', 'That is your only device. To stop, remove your name and card.');

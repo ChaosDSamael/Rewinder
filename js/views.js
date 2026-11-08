@@ -138,7 +138,7 @@ ${r.name === 'list' ? '' : `<div class="search">${icon.search}<label class="sr" 
 ${state.canInstall ? `<button type="button" class="btn btn-ghost" data-action="install">${icon.install}Install</button>` : ''}
 ${state.settings.tvButton ? `<button type="button" class="icon-btn tv-btn" data-action="tv-enter" aria-label="TV mode" title="TV mode">${icon.tv}</button>` : ''}
 <button type="button" class="icon-btn" data-action="spoiler" aria-pressed="${spoiler}" aria-label="Spoiler mode" title="${spoiler ? 'Spoiler mode is on: your notes are blurred' : 'Spoiler mode: blur your notes'}">${icon.eyeOff}</button>
-<a class="icon-btn icon-settings" href="#/settings" aria-label="${needsBackup(state) ? 'Settings, a backup is due' : 'Settings'}" title="${needsBackup(state) ? 'Settings · time for a backup' : 'Settings'}"${r.name === 'settings' ? ' aria-current="page"' : ''}>${icon.sliders}${needsBackup(state) ? '<span class="ping" aria-hidden="true"></span>' : ''}</a>
+<a class="icon-btn icon-settings" href="#/settings" aria-label="${syncTrouble(state) ? "Settings, your list isn't syncing" : needsBackup(state) ? 'Settings, a backup is due' : 'Settings'}" title="${syncTrouble(state) ? "Settings · your list isn't syncing" : needsBackup(state) ? 'Settings · time for a backup' : 'Settings'}"${r.name === 'settings' ? ' aria-current="page"' : ''}>${icon.sliders}${needsBackup(state) || syncTrouble(state) ? '<span class="ping" aria-hidden="true"></span>' : ''}</a>
 <button type="button" class="btn btn-primary btn-scan" data-action="add">${icon.radar}<span>Scan</span><span class="sweep" aria-hidden="true"></span></button>
 </div>
 </header>`;
@@ -785,13 +785,17 @@ function installBlock(state) {
   return '<p class="set-text">To install Rewinder as an app, open your browser menu and choose <b>Install Rewinder</b> (Chrome, Edge, Brave). In Chrome you can also click the install icon at the right end of the address bar.</p>';
 }
 
+// Your list stopped syncing: it can't open (another key), or it has failed for 5 minutes.
+const syncTrouble = (state) => Boolean(state.sync && liveReady(state) && (state.sync.blocked || (state.sync.error && state.sync.failSince && Date.now() - state.sync.failSince > 5 * 60e3)));
+
 // Your list on all your devices: how it's going.
 function syncLine(state) {
   const y = state.sync || {};
   if (y.blocked) return '<p class="set-text">This device can\'t open your list: your other devices lock it with another key. Remove this device below, then add it again with a code from one of them.</p>';
   if (y.busy && !y.at) return '<p class="panel-sub">Syncing your list…</p>';
   if (y.error) return `<p class="panel-sub">Your list didn't sync: ${esc(y.error)}</p>`;
-  if (y.at) return `<p class="panel-sub">Your list is the same on all your devices · synced ${esc(ago(y.at))}</p>`;
+  const big = y.tooBig ? ` · ${y.tooBig === 1 ? 'one title is' : `${y.tooBig} titles are`} too big to sync and stay${y.tooBig === 1 ? 's' : ''} on this device` : '';
+  if (y.at) return `<p class="panel-sub">Your list is the same on all your devices · synced ${esc(ago(y.at))}${big}</p>`;
   return '<p class="panel-sub">Your list syncs between your devices.</p>';
 }
 

@@ -32,7 +32,7 @@ const state = {
   // Friends by name: requests waiting, friends on the server, the last check.
   live: { incoming: [], outgoing: [], friends: [], checkedAt: 0, error: '', devices: null },
   // Your list on all your devices: syncing now, the last time it worked, what went wrong.
-  sync: { busy: false, at: null, error: '', blocked: '' },
+  sync: { busy: false, at: null, error: '', blocked: '', failSince: null, tooBig: 0 },
   route: { name: 'home' },
   current: null,
   history: {},
@@ -454,6 +454,10 @@ document.addEventListener('visibilitychange', () => {
     liveRefresh().catch((err) => console.warn('Could not check your friends', err));
   }
 });
+// Left open (on a TV, a second screen): your friends and your other devices are checked every few minutes anyway.
+setInterval(() => {
+  if (document.visibilityState === 'visible' && state.ready && liveOn()) liveRefresh().catch((err) => console.warn('Could not check your friends', err));
+}, 180000);
 addEventListener('online', () => {
   publishNow().catch((err) => console.warn('Could not send your card', err));
   liveRefresh(true).catch((err) => console.warn('Could not check your friends', err));
@@ -534,8 +538,17 @@ function onDialogClosed() {
 }
 dlg.addEventListener('close', onDialogClosed);
 
+// A question still open when another one comes is answered "no": nothing waits forever.
+function settleQuestion() {
+  if (!confirmResolve) return;
+  const resolve = confirmResolve;
+  confirmResolve = null;
+  resolve(false);
+}
+
 function ask(options) {
   return new Promise((resolve) => {
+    settleQuestion();
     openDialog(V.confirmDialog(options), '[data-action="confirm-no"]');
     confirmResolve = resolve;
   });
@@ -544,6 +557,7 @@ function ask(options) {
 // Resolves with the value of the button picked, or false when the dialog is closed.
 function choose(options) {
   return new Promise((resolve) => {
+    settleQuestion();
     openDialog(V.choiceDialog(options), '.dlg-actions .btn-primary');
     confirmResolve = resolve;
   });
@@ -2510,6 +2524,7 @@ async function publishNow(force = false) {
     try {
       const { data } = await S.publish(liveBase(), liveAuth(), card);
       lastPut = Date.now();
+      publishFails = 0;
       state.settings.liveSig = sig;
       state.settings.liveAt = (data && data.at) || new Date().toISOString();
       await saveSettings();
@@ -2518,6 +2533,8 @@ async function publishNow(force = false) {
       if (err && err.code === 'slow-down') publishSoon(12000);
       else if (!liveFailed(err)) {
         state.live.error = err.message;
+        publishFails++;
+        publishSoon(retryDelay(publishFails));
         requestRender();
       }
     } finally {
@@ -2535,8 +2552,13 @@ let syncMeta = null;
 let syncing = null;
 let syncTimer = null;
 let syncAgain = false;
-const SYNC_BATCH = 150;
-const SYNC_BYTES = 1300000;
+// Small pushes: the free server gets 10 ms of computing per request, and a big list would blow through it.
+const SYNC_BATCH = 100;
+const SYNC_BYTES = 300000;
+// Something failed (no network, the server busy): try again by itself, later and later (30 s up to 10 min).
+const retryDelay = (n) => Math.min(600000, 30000 * 2 ** Math.max(0, Math.min(n - 1, 5)));
+let syncFails = 0;
+let publishFails = 0;
 const freshSync = () => ({ v: 0, after: '', pushed: {}, gone: [], keyPushed: false, blocked: '' });
 const uOf = (t) => Date.parse(t.updatedAt) || 0;
 
@@ -2556,7 +2578,7 @@ async function loadSync() {
 const saveSync = () => store.putMeta('sync', syncMeta).catch((err) => console.warn('Sync bookmark not saved', err));
 async function resetSync() {
   syncMeta = freshSync();
-  state.sync = { ...state.sync, at: null, error: '', blocked: '' };
+  state.sync = { ...state.sync, at: null, error: '', blocked: '', failSince: null, tooBig: 0 };
   await saveSync();
 }
 
@@ -2585,9 +2607,15 @@ async function syncNow() {
       await pushList();
       state.sync.at = new Date().toISOString();
       state.sync.error = '';
+      state.sync.failSince = null;
+      syncFails = 0;
     } catch (err) {
       if (liveFailed(err)) return;
       state.sync.error = err && err.code === 'no-route' ? 'The Rewinder server needs its update first.' : (err && err.message) || 'Could not sync your list.';
+      state.sync.failSince = state.sync.failSince || Date.now();
+      syncFails++;
+      syncAgain = false;
+      syncSoon(retryDelay(syncFails));
     } finally {
       state.sync.busy = false;
       syncing = null;
@@ -2725,6 +2753,7 @@ async function pushList() {
   }
   let batch = [];
   let bytes = 0;
+  let tooBig = 0;
   const send = async () => {
     if (!batch.length) return;
     await S.push(liveBase(), liveAuth(), batch.map((x) => ({ id: x.id, u: x.u, b: x.b })));
@@ -2737,12 +2766,13 @@ async function pushList() {
     const value = q.title ? { u: q.u, t: q.title, h: (await store.historyFor(q.id, 30)).map((h) => ({ at: h.at, text: h.text })) } : q.value;
     const b = await Y.seal(key, q.id, value);
     // Too big for the server (thousands of episodes with long notes): it stays on this device.
-    if (b.length > 390000) { console.warn('Too big to sync', q.id); q.done(); continue; }
+    if (b.length > 390000) { console.warn('Too big to sync', q.id); tooBig++; q.done(); continue; }
     if (batch.length >= SYNC_BATCH || bytes + b.length > SYNC_BYTES) await send();
     batch.push({ ...q, b });
     bytes += b.length;
   }
   await send();
+  if (tooBig) state.sync.tooBig = (state.sync.tooBig || 0) + tooBig;
 }
 
 async function noteGone(id) {
@@ -3122,6 +3152,7 @@ async function exportBackup() {
 
 async function importBackup(file) {
   if (!file) return;
+  if (file.size > 100e6) { toast('That file is too big for a backup.'); return; }
   let data;
   try {
     data = JSON.parse(await file.text());
@@ -3133,6 +3164,7 @@ async function importBackup(file) {
     toast('That file is not a Rewinder backup.');
     return;
   }
+  if (data.titles.length > 50000) { toast('That backup has more titles than Rewinder can take.'); return; }
   const have = M.live(state.titles).length;
   const incoming = data.titles.filter((t) => t && !t.deletedAt).length;
   const synced = liveOn() && Y.isKey(state.settings.syncKey);
@@ -3450,6 +3482,18 @@ const fail = (err) => {
   toast('Something went wrong. ' + (err && err.message ? err.message : ''));
 };
 
+// A mistake in Rewinder itself (not the network, not a server saying no) that nothing caught: said once in a while,
+// so it can be reported instead of failing in silence.
+let lastBugToast = 0;
+addEventListener('unhandledrejection', (e) => {
+  const err = e.reason;
+  console.error('Unhandled', err);
+  if (!(err instanceof TypeError || err instanceof ReferenceError || err instanceof RangeError || err instanceof SyntaxError)) return;
+  if (Date.now() - lastBugToast < 30000) return;
+  lastBugToast = Date.now();
+  toast(`Something went wrong in Rewinder: ${err.message}. If it keeps happening, tell Sonny.`, { timeout: 9000 });
+});
+
 document.addEventListener('click', (e) => {
   if (state.ui.friendsOpen && !e.target.closest('.friends-wrap, [data-action="friends-toggle"]') && !dlg.open && document.contains(e.target)) {
     state.ui.friendsOpen = false;
@@ -3471,6 +3515,7 @@ window.addEventListener('drop', (e) => {
   const file = e.dataTransfer.files && e.dataTransfer.files[0];
   if (!file) return;
   if (state.route.name === 'import' && /\.txt$/i.test(file.name)) {
+    if (file.size > 2e6) { toast('That file is too big for a list.'); return; }
     file.text().then((text) => { state.imp.text = text; render(); }).catch(fail);
     return;
   }

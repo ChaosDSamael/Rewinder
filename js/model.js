@@ -1,6 +1,6 @@
 // Rewinder — data helpers. Pure functions: no DOM, no storage.
 
-export const APP_VERSION = '1.11.0';
+export const APP_VERSION = '1.11.1';
 
 export const KINDS = ['movie', 'tv', 'anime', 'game'];
 export const KIND_LABEL = { movie: 'Movie', tv: 'TV Show', anime: 'Anime', game: 'Game' };
@@ -660,7 +660,8 @@ export function sameTitle(a, b) {
   if (a.rawgId && b.rawgId) return a.rawgId === b.rawgId;
   if (kindClass(a.kind) !== kindClass(b.kind) || !a.year || a.year !== b.year) return false;
   const name = plain(a.title);
-  return Boolean(name) && name === plain(b.title);
+  // A title with no real name ("Untitled") is never taken for another one.
+  return name.length > 1 && name !== 'untitled' && name === plain(b.title);
 }
 
 // One title out of two copies: the one changed last leads, and nothing either one knew is lost

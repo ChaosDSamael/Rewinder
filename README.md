@@ -125,9 +125,11 @@ Ce qui protège Rewinder pis tes amis :
 - Les liens vers les magasins (Steam, PlayStation, Xbox, Nintendo…) s'ouvrent seulement vers les vrais magasins. Un lien vers ailleurs est enlevé.
 - Ton nom Rewinder : ton appareil a un secret que le serveur ne garde jamais (juste son empreinte). Ce secret part seulement vers le serveur où ton nom a été créé : changer l'adresse du serveur ne l'envoie nulle part ailleurs.
 - Ta liste sur le serveur est barrée (AES-256) sur ton appareil avant de partir, avec une clé qui ne va jamais sur le serveur. Le serveur (pis Sonny, pis Cloudflare) voit juste des données brouillées, un numéro de titre pis l'heure du changement. Chaque titre est barré avec son numéro : le serveur ne peut pas échanger un titre pour un autre.
-- Chaque appareil a son propre secret. Un appareil enlevé est dehors tout de suite. Le dernier appareil ne peut pas s'enlever (on efface le nom à la place).
+- Chaque appareil a son propre secret. Un appareil enlevé est dehors tout de suite, pis les codes en attente meurent avec lui : il ne peut pas s'être gardé une porte d'entrée. Le dernier appareil ne peut pas s'enlever (on efface le nom à la place).
 - Le code pour ajouter un appareil ne contient jamais de secret, marche une fois, pis expire après 15 minutes. Il contient la clé de ta liste : Rewinder montre le nom pis avertit que celui qui a fait le code voit toute la liste, avant de l'utiliser. Un code pour un autre serveur, ou un code qui ment sur le nom, est refusé.
 - Un serveur qui envoie n'importe quoi : rien ne s'ouvre sans la clé, donc rien n'entre dans ta liste pis rien ne part. Rewinder le dit dans **Settings → Friends**.
+- Une requête ne reste jamais dans le vide : chaque appel a un temps limite. Si le serveur ou Internet ne répond pas, Rewinder réessaie tout seul (après 30 secondes, puis de plus en plus espacé, jusqu'à 10 minutes). Après 5 minutes sans réussir, un point sur **Settings** le dit. Laissé ouvert, Rewinder regarde aussi tes amis pis tes autres appareils aux 3 minutes.
+- Le serveur gratuit a 10 millisecondes de calcul par requête : la liste voyage en petits paquets pour ne jamais les dépasser.
 - Le serveur : il faut le code d'invitation pour se créer un nom. Une adresse qui se trompe de code 10 fois attend une heure, pis une adresse crée 5 noms par jour au maximum. Chaque changement est fait d'un coup (une transaction) : deux personnes sont amies des deux bords, ou pas pantoute. Une carte s'ouvre seulement si les deux ont dit oui. Une carte au plus aux 10 secondes, 1 Mo au maximum, 200 amis. Une liste : 30 Mo au maximum par nom, 10 appareils. Passé 400 Mo, les listes arrêtent de grossir (le plan gratuit arrête à 500 Mo), pour que les noms, les amis pis les cartes continuent de marcher. Un nom effacé reste bloqué 7 jours, pour que personne le prenne tout de suite pis reçoive les demandes de quelqu'un d'autre.
 - Un ami « live » s'affiche sous son nom Rewinder, pas sous le nom libre de sa carte : personne ne peut se faire passer pour quelqu'un d'autre en écrivant « Sonny » sur sa carte. Sa carte ne peut pas non plus prendre la place de la carte d'un autre ami.
 
@@ -144,6 +146,7 @@ Ce qui reste (connu, accepté) :
 - Toi (ou quelqu'un qui prend ton compte Cloudflare) peux lire les cartes sur le serveur. Les listes, non : elles sont barrées.
 - Celui qui contrôle le code de Rewinder (ton compte GitHub) pourrait changer l'app pour qu'elle envoie les clés ailleurs. C'est pour ça que la 2FA sur GitHub compte.
 - Un appareil enlevé garde ce qui était déjà dessus. Pour un cell perdu, c'est le verrouillage du cell qui protège ça.
+- Quelqu'un qui a un de tes appareils déverrouillé dans les mains peut faire tout ce que tu fais, même enlever tes autres appareils. Là aussi, le verrou de l'appareil est la vraie protection.
 
 ## Importer une liste
 
