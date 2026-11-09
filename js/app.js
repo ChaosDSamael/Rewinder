@@ -3040,10 +3040,7 @@ async function moveHere(form) {
     yes: 'Add this device'
   });
   if (!ok) return;
-  if (liveOn()) {
-    try { await S.dropDevice(liveBase(), liveAuth(), 'self'); } catch (err) { console.warn('Could not remove the old device', err); }
-    forgetName();
-  }
+  // Joined first; only then does this device let go of what it was. A code that fails changes nothing here.
   const secret = S.newSecret();
   let name;
   try {
@@ -3055,6 +3052,11 @@ async function moveHere(form) {
   }
   // The code said one name and the server another: someone made that code to fool you. It is not used.
   if (!name || !sameName(name, got.name)) { toast(`That code was not really for ${got.name}. It was not used.`, { timeout: 9000 }); return; }
+  // What this device was leaves its name too (a device the server doesn't know has nothing left to remove).
+  if (liveOn() && !state.live.out) {
+    try { await S.dropDevice(liveBase(), liveAuth(), 'self'); } catch (err) { console.warn('Could not remove the old device', err); }
+  }
+  state.live = { incoming: [], outgoing: [], friends: [], checkedAt: 0, error: '', devices: null, out: '' };
   Object.assign(state.settings, { liveName: name, liveSecret: secret, liveHost: got.base, liveSig: '', liveAt: null, syncKey: got.key });
   if (!state.settings.cardName) state.settings.cardName = name;
   await saveSettings();

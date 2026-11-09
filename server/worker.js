@@ -53,7 +53,7 @@ const PAGE_BYTES = 400000;
 // The free plan stops a database at 500 MB: past 400 MB, lists stop growing so names, friends and cards keep working.
 const DB_FULL = 400000000;
 // Which server this is: the app tells an old server (that answers without it) from a device it doesn't know.
-const VERSION = '1.12.0';
+const VERSION = '1.12.1';
 const ITEM_ID = /^[A-Za-z0-9_.:-]{1,80}$/;
 const B64 = /^[A-Za-z0-9_-]+$/;
 const DEVICE_ID = /^[A-Za-z0-9_-]{6,32}$/;
@@ -165,14 +165,13 @@ const ready = (env) => {
   return (it.ready ||= env.DB.batch(SCHEMA.map((sql) => env.DB.prepare(sql))).catch((err) => { it.ready = null; throw err; }));
 };
 
-// Counts something per key in a time window (by `add`, one by default); false once it went past `max`.
-async function within(env, key, max, windowMs, now, add = 1) {
-  const [, got] = await env.DB.batch([
-    env.DB.prepare(`INSERT INTO limits (k, n, until) VALUES (?1, ?4, ?2)
-      ON CONFLICT (k) DO UPDATE SET n = CASE WHEN until < ?3 THEN ?4 ELSE n + ?4 END, until = CASE WHEN until < ?3 THEN ?2 ELSE until END`)
-      .bind(key, now + windowMs, now, add),
-    env.DB.prepare('SELECT n FROM limits WHERE k = ?1').bind(key)
-  ]);
+// Adds `add` to a count kept per key for a time window (a new window starts once the last one is over).
+const tally = (env, key, windowMs, now, add = 1) => env.DB.prepare(`INSERT INTO limits (k, n, until) VALUES (?1, ?4, ?2)
+  ON CONFLICT (k) DO UPDATE SET n = CASE WHEN until < ?3 THEN ?4 ELSE n + ?4 END, until = CASE WHEN until < ?3 THEN ?2 ELSE until END`)
+  .bind(key, now + windowMs, now, add);
+// Counts one more; false once it went past `max`.
+async function within(env, key, max, windowMs, now) {
+  const [, got] = await env.DB.batch([tally(env, key, windowMs, now), env.DB.prepare('SELECT n FROM limits WHERE k = ?1').bind(key)]);
   return got.results[0].n <= max;
 }
 const peek = async (env, key, now) => {
@@ -214,13 +213,15 @@ async function signedIn(request, env, now) {
   return { k: row.k, name: row.name, device: id, seen: now, h };
 }
 
-// The app says it's there each time it opens: a device is seen at most once an hour.
+// Whatever a device asks, it was seen (written once an hour at most): only a device unused for months expires.
 async function seen(env, me, now) {
   if (!(me.seen > now - HOUR)) await env.DB.prepare('UPDATE devices SET seen = ?2 WHERE h = ?1').bind(me.h, now).run();
 }
 
 // Once an hour: what nobody uses any more leaves. A device not seen for 5 months is removed; a name left with no
-// device goes with everything it had, like a removed name. Old counters and codes go too.
+// device goes with everything it had, like a removed name. A name from before devices (no device row: its card
+// says when it was last used) goes the same way. A name let go for lack of use is free right away, so its owner
+// coming back can take it again (the week's hold is for names removed on purpose). Old counters and codes go too.
 async function tidy(env, now) {
   const it = about(env);
   if (Math.abs(now - it.tidied) < HOUR) return;
@@ -229,13 +230,15 @@ async function tidy(env, now) {
   try {
     await env.DB.batch([
       env.DB.prepare('DELETE FROM devices WHERE seen < ?1').bind(now - DEVICE_TTL),
+      env.DB.prepare(`UPDATE users SET hash = 'on' WHERE hash IS NOT NULL AND hash <> 'on' AND at < ?1
+        AND NOT EXISTS (SELECT 1 FROM cards c WHERE c.k = users.k AND c.t > ?2)`).bind(new Date(now - DEVICE_TTL).toISOString(), now - DEVICE_TTL),
       env.DB.prepare(`DELETE FROM friends WHERE a IN (${lost}) OR b IN (${lost})`),
       env.DB.prepare(`DELETE FROM asks WHERE src IN (${lost}) OR dst IN (${lost})`),
       env.DB.prepare(`DELETE FROM cards WHERE k IN (${lost}) OR t < ?1`).bind(now - CARD_TTL),
       env.DB.prepare(`DELETE FROM tickets WHERE k IN (${lost}) OR until < ?1`).bind(now),
       env.DB.prepare(`DELETE FROM items WHERE k IN (${lost})`),
       env.DB.prepare(`DELETE FROM seqs WHERE k IN (${lost})`),
-      env.DB.prepare(`UPDATE users SET hash = NULL, gone = ?1 WHERE k IN (${lost})`).bind(now),
+      env.DB.prepare(`UPDATE users SET hash = NULL, gone = ?1 WHERE k IN (${lost})`).bind(now - NAME_HOLD - 1),
       env.DB.prepare('DELETE FROM limits WHERE until < ?1').bind(now)
     ]);
   } catch (err) {
@@ -334,6 +337,7 @@ async function route(request, env, url, now) {
   }
 
   const me = await signedIn(request, env, now);
+  await seen(env, me, now);
 
   if (path === '/v1/me' && method === 'GET') {
     const [friends, incoming, outgoing] = await env.DB.batch([
@@ -342,7 +346,6 @@ async function route(request, env, url, now) {
       env.DB.prepare('SELECT u.name AS name FROM asks q JOIN users u ON u.k = q.src AND u.hash IS NOT NULL WHERE q.dst = ?1 ORDER BY q.t').bind(me.k),
       env.DB.prepare('SELECT u.name AS name FROM asks q JOIN users u ON u.k = q.dst AND u.hash IS NOT NULL WHERE q.src = ?1 ORDER BY q.t').bind(me.k)
     ]);
-    await seen(env, me, now);
     return json({ name: me.name, device: me.device, friends: friends.results.map((r) => ({ name: r.name, at: r.at || null })), incoming: incoming.results.map((r) => r.name), outgoing: outgoing.results.map((r) => r.name) });
   }
 
@@ -417,7 +420,6 @@ async function route(request, env, url, now) {
       bytes += r.body ? r.body.length : 0;
       items.push({ id: r.id, u: r.u, v: r.v, b: r.body });
     }
-    await seen(env, me, now);
     // n: where the server's count is. A bookmark past it means the server went back in time (restored from a
     // copy): the app reads everything again and sends its own back.
     return json({ items, more: items.length < rows.results.length, n: seq.results.length ? seq.results[0].n : 0 });
@@ -431,9 +433,11 @@ async function route(request, env, url, now) {
       if (!x || typeof x.id !== 'string' || !ITEM_ID.test(x.id) || !Number.isSafeInteger(x.u) || x.u <= 0 || x.u > MAX_U
         || typeof x.b !== 'string' || !x.b.length || x.b.length > MAX_ITEM || !B64.test(x.b)) throw new Refusal(400, 'bad-items', 'The app sent a bad list.');
     }
-    // Counted in titles, not in requests: what a day of writing costs the server.
-    if (!(await within(env, 's:' + me.k, ITEMS_DAY, DAY, now, list.length))) throw new Refusal(429, 'busy-day', 'That is a lot of syncing for one day. Your list syncs again tomorrow.');
-    if (!(await within(env, 's:*', ITEMS_ALL, DAY, now, list.length))) throw new Refusal(429, 'busy-day', 'The Rewinder server is busy today. Your list syncs again tomorrow.');
+    // Counted in titles, not in requests: what a day of writing costs the server. Checked first, and counted in
+    // the same transaction as the write: a push that is refused costs nothing, and counts for nothing.
+    const [mine, all] = await Promise.all([peek(env, 's:' + me.k, now), peek(env, 's:*', now)]);
+    if (mine + list.length > ITEMS_DAY) throw new Refusal(429, 'busy-day', 'That is a lot of syncing for one day. Your list syncs again tomorrow.');
+    if (all + list.length > ITEMS_ALL) throw new Refusal(429, 'busy-day', 'The Rewinder server is busy today. Your list syncs again tomorrow.');
     if (about(env).size > DB_FULL) throw new Refusal(507, 'server-full', 'The Rewinder server is full. Sonny has to make room.');
     const items = list.map((x) => ({ id: x.id, u: x.u, b: x.b }));
     const add = items.reduce((n, x) => n + x.b.length, 0);
@@ -449,7 +453,9 @@ async function route(request, env, url, now) {
         FROM json_each(?2) AS j WHERE 1
         ON CONFLICT (k, id) DO UPDATE SET u = excluded.u, v = excluded.v, d = excluded.d, body = excluded.body WHERE excluded.u >= items.u`)
         .bind(me.k, JSON.stringify(items), me.device),
-      env.DB.prepare('UPDATE seqs SET bytes = (SELECT COALESCE(SUM(length(body)), 0) FROM items WHERE k = ?1) WHERE k = ?1').bind(me.k)
+      env.DB.prepare('UPDATE seqs SET bytes = (SELECT COALESCE(SUM(length(body)), 0) FROM items WHERE k = ?1) WHERE k = ?1').bind(me.k),
+      tally(env, 's:' + me.k, DAY, now, list.length),
+      tally(env, 's:*', DAY, now, list.length)
     ]));
     return json({ stored: done[1].meta.changes });
   }
