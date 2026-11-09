@@ -2395,7 +2395,7 @@ async function removeFriend(id) {
     try {
       await S.tell(liveBase(), liveAuth(), 'unfriend', f.live);
     } catch (err) {
-      if (!liveFailed(err)) toast(err.message);
+      if (!liveFailed(err, true)) toast(err.message);
       return;
     }
   }
@@ -2475,12 +2475,18 @@ const liveId = (name) => 'live-' + String(name).toLowerCase();
 // server itself is in trouble (an old version put back, its data lost). Nothing is forgotten on its own: the name,
 // its secret and the key to your list stay here, and Rewinder asks again now and then. Forgetting is your call.
 const OUT_RETRY = 10 * 60e3;
-function liveFailed(err) {
+// Said once when it starts, and again each time something you asked for (asked = true) didn't go through because
+// of it: a click never fails without a word.
+function liveFailed(err, asked = false) {
   if (!err || err.status !== 401) return false;
   const old = !err.server;
-  if (!state.live.out) {
+  const where = { action: { label: 'Settings', run: () => go('#/settings') }, timeout: 12000 };
+  if (asked) {
+    toast(old ? "That didn't go through: the Rewinder server needs its update. Nothing is lost."
+      : `That didn't go through: the server doesn't know this device as ${state.settings.liveName} right now. Your list stays here.`, where);
+  } else if (!state.live.out) {
     toast(old ? 'The Rewinder server needs its update. Nothing is lost: this device picks up again once it is done.'
-      : `The server doesn't know this device as ${state.settings.liveName} right now. Your list stays here.`, { action: { label: 'Settings', run: () => go('#/settings') }, timeout: 12000 });
+      : `The server doesn't know this device as ${state.settings.liveName} right now. Your list stays here.`, where);
   }
   state.live.out = old ? 'old' : 'out';
   state.live.checkedAt = Date.now();
@@ -2872,7 +2878,7 @@ async function removeDevice(id) {
   try {
     await S.dropDevice(liveBase(), liveAuth(), d.me ? 'self' : id);
   } catch (err) {
-    if (!liveFailed(err)) toast(err.message);
+    if (!liveFailed(err, true)) toast(err.message);
     return;
   }
   if (d.me) {
@@ -2985,7 +2991,7 @@ async function addByName(form) {
     if (field) field.value = '';
     toast(data.state === 'friends' ? `You and ${data.name} are friends now.` : `Request sent to ${data.name}. Their card shows up here once they say yes.`);
   } catch (err) {
-    if (!liveFailed(err)) toast(err.message);
+    if (!liveFailed(err, true)) toast(err.message);
     return;
   }
   await liveRefresh(true);
@@ -2996,7 +3002,7 @@ async function answerRequest(what, name) {
   try {
     await S.tell(liveBase(), liveAuth(), what, name);
   } catch (err) {
-    if (!liveFailed(err)) toast(err.message);
+    if (!liveFailed(err, true)) toast(err.message);
     return;
   }
   if (what === 'accept') toast(`You and ${name} are friends now.`);
@@ -3017,7 +3023,7 @@ async function showMoveCode() {
   try {
     ({ data } = await S.transfer(liveBase(), liveAuth()));
   } catch (err) {
-    if (!liveFailed(err)) toast(err.message);
+    if (!liveFailed(err, true)) toast(err.message);
     return;
   }
   openDialog(V.moveCodeDialog(S.moveCode(liveBase(), state.settings.liveName, data.code, state.settings.syncKey), state.settings.liveName), '#move-code', 'dlg-move');
@@ -3078,7 +3084,7 @@ async function leaveServer() {
   try {
     await S.leave(liveBase(), liveAuth());
   } catch (err) {
-    if (!liveFailed(err)) toast(err.message);
+    if (!liveFailed(err, true)) toast(err.message);
     return;
   }
   forgetName();
@@ -3263,7 +3269,7 @@ async function importBackup(file) {
   const look = data.settings || {};
   if (M.isHexColor(look.accent)) state.settings.accent = look.accent;
   if (typeof look.scanlines === 'boolean') state.settings.scanlines = look.scanlines;
-  state.settings.lastBackupAt = typeof data.exportedAt === 'string' ? data.exportedAt : new Date().toISOString();
+  state.settings.lastBackupAt = M.notAhead(typeof data.exportedAt === 'string' ? data.exportedAt : new Date().toISOString());
   state.settings.changesSinceBackup = 0;
   state.history = idMap();
   state.ui.homeScore = idMap();
@@ -3514,7 +3520,10 @@ const actions = {
   'live-cancel': (el) => answerRequest('cancel', el.dataset.name),
   'live-move': () => showMoveCode(),
   'live-leave': () => leaveServer(),
-  'live-retry': () => liveRefresh(true),
+  'live-retry': async () => {
+    await liveRefresh(true);
+    if (state.live.out) toast(`${state.live.error || "The server doesn't know this device right now."} Rewinder tries again by itself every 10 minutes.`);
+  },
   'live-forget': () => forgetHere(),
   'device-remove': (el) => removeDevice(el.dataset.id),
   'live-copy': async () => {

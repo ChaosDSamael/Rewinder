@@ -53,16 +53,20 @@ const PAGE_BYTES = 400000;
 // The free plan stops a database at 500 MB: past 400 MB, lists stop growing so names, friends and cards keep working.
 const DB_FULL = 400000000;
 // Which server this is: the app tells an old server (that answers without it) from a device it doesn't know.
-const VERSION = '1.12.1';
+const VERSION = '1.12.2';
 const ITEM_ID = /^[A-Za-z0-9_.:-]{1,80}$/;
 const B64 = /^[A-Za-z0-9_-]+$/;
 const DEVICE_ID = /^[A-Za-z0-9_-]{6,32}$/;
 // What this server remembers about its database between requests: tables made, its size, the last tidy-up.
+// Cloudflare usually hands every request the same env, but doesn't promise it: a request that brings a new one
+// starts from what the last one knew (a server has one database), so the tidy-up still runs once an hour, not on
+// every request. Only the tables are checked again (that writes nothing).
 const known = new WeakMap();
+let last = { ready: null, size: 0, tidied: 0 };
 const about = (env) => {
   let it = known.get(env.DB);
-  if (!it) known.set(env.DB, (it = { ready: null, size: 0, tidied: 0 }));
-  return it;
+  if (!it) known.set(env.DB, (it = { ready: null, size: last.size, tidied: last.tidied }));
+  return (last = it);
 };
 
 const keyOf = (name) => String(name).toLowerCase();

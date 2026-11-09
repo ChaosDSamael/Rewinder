@@ -1,6 +1,6 @@
 // Rewinder — data helpers. Pure functions: no DOM, no storage.
 
-export const APP_VERSION = '1.12.1';
+export const APP_VERSION = '1.12.2';
 
 export const KINDS = ['movie', 'tv', 'anime', 'game'];
 export const KIND_LABEL = { movie: 'Movie', tv: 'TV Show', anime: 'Anime', game: 'Game' };
@@ -209,6 +209,19 @@ export function stamp(before) {
   const prev = Math.min((typeof before === 'number' ? before : Date.parse(before)) || 0, MAX_TIME - 1);
   return new Date(Math.max(Date.now(), prev + 1)).toISOString();
 }
+
+// A date from the future in a backup (a clock set years ahead, a file edited by hand) comes in as now: kept, every
+// change after it would be stamped later still, and "recent" would show those titles first for good. A day of
+// slack for a clock a little ahead. Only at a restore: a date that came by sync stays, or a change made after it
+// could lose to it.
+export const notAhead = (v, now = Date.now()) => (v && Date.parse(v) > now + 864e5 ? new Date(now).toISOString() : v);
+export const titleNotAhead = (t, now = Date.now()) => ({
+  ...t,
+  createdAt: notAhead(t.createdAt, now),
+  updatedAt: notAhead(t.updatedAt, now),
+  lastActivity: notAhead(t.lastActivity, now),
+  deletedAt: notAhead(t.deletedAt, now)
+});
 
 export function newTitle(fields = {}) {
   const now = new Date().toISOString();

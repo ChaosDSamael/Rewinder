@@ -88,7 +88,7 @@ function friendsPanel(state) {
     ? `<div class="fp-mine">
 <div class="fp-me">${nick(name || state.settings.liveName)}<span class="fp-who"><span class="fp-me-title">${esc(state.settings.liveName)}</span><span class="fp-meta">${esc(name || state.settings.liveName)} · ${mine} titles</span></span></div>
 <p class="fp-note">${sent} Your scores, statuses, favorites and tags. Never your notes.</p>
-${L.error ? `<p class="fp-stale">${esc(L.error)}</p>` : ''}
+${L.error ? `<p class="fp-stale">${esc(L.error)}${L.out ? ' <button type="button" class="inline-link" data-action="live-settings">Settings</button>' : ''}</p>` : ''}
 <form class="fp-add" data-form="live-add" autocomplete="off"><label class="label" for="live-who">Add a friend by name</label><div class="fp-add-row"><input id="live-who" name="who" class="input input-sm" maxlength="24" placeholder="Their Rewinder name" autocomplete="off" spellcheck="false" autocapitalize="off" enterkeyhint="send"><button type="submit" class="btn btn-primary btn-sm">Ask</button></div></form>
 </div>`
     : `<div class="fp-mine">

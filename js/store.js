@@ -1,5 +1,5 @@
 // Rewinder — storage. Everything lives in this browser's IndexedDB; nothing is sent anywhere.
-import { DEFAULT_SETTINGS, normalizeTitle, stamp } from './model.js';
+import { DEFAULT_SETTINGS, normalizeTitle, stamp, notAhead, titleNotAhead } from './model.js';
 
 const DB_NAME = 'rewinder';
 const DB_VERSION = 1;
@@ -195,7 +195,8 @@ export async function importAll(data, { bump = false } = {}) {
   const titleStore = tx.objectStore('titles');
   const historyStore = tx.objectStore('history');
   const had = new Map(bump ? (await result(titleStore.getAll())).map((t) => [t && t.id, Date.parse(t && t.updatedAt) || 0]) : []);
-  const titles = data.titles.map(normalizeTitle).map((t) => {
+  const now = Date.now();
+  const titles = data.titles.map(normalizeTitle).map((t) => titleNotAhead(t, now)).map((t) => {
     if (!bump) return t;
     const before = Math.max(had.get(t.id) || 0, Date.parse(t.updatedAt) || 0);
     return { ...t, updatedAt: stamp(before) };
@@ -205,7 +206,7 @@ export async function importAll(data, { bump = false } = {}) {
   for (const t of titles) titleStore.put(t);
   for (const h of history) {
     if (h && typeof h.titleId === 'string' && h.text) {
-      historyStore.add({ titleId: h.titleId, at: String(h.at || new Date().toISOString()), text: String(h.text).slice(0, 300) });
+      historyStore.add({ titleId: h.titleId, at: notAhead(String(h.at || new Date(now).toISOString()), now), text: String(h.text).slice(0, 300) });
     }
   }
   await finished(tx);
