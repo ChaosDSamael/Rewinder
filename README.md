@@ -180,9 +180,9 @@ Aucune étape de compilation : du HTML, du CSS et du JavaScript (modules ES) ser
 
 ### Publier une version
 
-1. `APP_VERSION` dans `js/model.js`, `VERSION` dans `sw.js` (`rewinder-` + le même numéro) pis `VERSION` dans `server/worker.js` : les trois pareils. Un nouveau fichier `js/` va aussi dans la liste de `sw.js`. Sans ça, ceux qui ont déjà Rewinder gardent l'ancienne version pour toujours. Un test le vérifie.
+1. `APP_VERSION` dans `js/model.js` pis `VERSION` dans `sw.js` (`rewinder-` + le même numéro). Un nouveau fichier `js/` va aussi dans la liste de `sw.js`. Sans ça, ceux qui ont déjà Rewinder gardent l'ancienne version pour toujours. Le serveur a son propre numéro (`VERSION` dans `server/worker.js`) : il change seulement quand le code du serveur change, jamais plus haut que celui de l'app. Un test vérifie les deux.
 2. Toutes les suites de tests passent, avec le passage de l'ancienne version à la nouvelle.
-3. Si `server/worker.js` a changé : Cloudflare → ton worker → **Edit code**, remplace tout par le nouveau, **Deploy**. Jamais un vieux `worker.js` : garde une copie de celui qui roule.
+3. Si `server/worker.js` a changé (son numéro aussi, donc) : Cloudflare → ton worker → **Edit code**, remplace tout par le nouveau, **Deploy**. Jamais un vieux `worker.js` : garde une copie de celui qui roule. Si seule l'app a changé, rien à faire dans Cloudflare.
 4. Après le Deploy, ouvre `https://rewinder.lavalleesonny.workers.dev/v1/me` : la réponse dit `signed-out` pis l'en-tête `X-Rewinder-Server` donne la version.
 
 ### Libérer un nom à la main
