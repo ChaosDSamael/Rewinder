@@ -1,6 +1,6 @@
 // Rewinder — data helpers. Pure functions: no DOM, no storage.
 
-export const APP_VERSION = '1.12.3';
+export const APP_VERSION = '1.13.0';
 
 export const KINDS = ['movie', 'tv', 'anime', 'game'];
 export const KIND_LABEL = { movie: 'Movie', tv: 'TV Show', anime: 'Anime', game: 'Game' };
@@ -702,7 +702,7 @@ const plain = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').to
 const kindClass = (kind) => (kind === 'game' ? 'g' : kind === 'movie' ? 'm' : 's');
 
 // How two lists can name the same title: its TMDB or RAWG number, then its name and year, then its name alone.
-function keysOf(x) {
+export function keysOf(x) {
   const keys = [];
   if (x.tmdb) keys.push('tmdb:' + x.tmdb);
   if (x.rawg) keys.push('rawg:' + x.rawg);
@@ -714,7 +714,7 @@ function keysOf(x) {
   return keys;
 }
 
-const refOf = (t) => ({
+export const refOf = (t) => ({
   kind: t.kind,
   title: t.title,
   year: t.year || null,

@@ -300,3 +300,83 @@ export async function fetchTitle(type, id, key, onStep) {
     seasons
   };
 }
+
+/* ---------- For you: what TMDB knows around the titles you love ---------- */
+
+// One title from a TMDB list (a franchise, someone's work, a theme), in the shape For you ranks.
+function candidateOf(r, type) {
+  const t = type || (r && r.media_type);
+  if (!r || !goodId(r.id) || r.adult === true || (t !== 'movie' && t !== 'tv')) return null;
+  const date = dayOf(t === 'movie' ? r.release_date : r.first_air_date);
+  return {
+    src: 'tmdb',
+    type: t,
+    id: r.id,
+    kind: kindOf(t, r.genre_ids, r.original_language, r.origin_country),
+    title: mainTitle(r, t).slice(0, 300),
+    year: yearOf(date),
+    date,
+    poster: image(r.poster_path, 'w342'),
+    overview: String(r.overview || '').trim().slice(0, 700),
+    rating: typeof r.vote_average === 'number' && Number.isFinite(r.vote_average) ? Math.max(0, Math.min(10, r.vote_average)) : null,
+    votes: Number.isInteger(r.vote_count) && r.vote_count > 0 ? r.vote_count : 0,
+    genres: Array.isArray(r.genre_ids) ? r.genre_ids.filter(Number.isInteger).slice(0, 10) : []
+  };
+}
+const candidates = (list, type) => (Array.isArray(list) ? list : []).slice(0, 200).map((r) => candidateOf(r, type)).filter(Boolean);
+const sameName = (a, b) => {
+  const p = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+  return p(a) !== '' && p(a) === p(b);
+};
+
+// Every movie of a franchise.
+export async function franchiseMovies(id, key) {
+  return candidates((await get(`/collection/${id}`, { language: 'en-US' }, key)).parts, 'movie');
+}
+
+// Someone you love, by name: their TMDB number. From the credits of a title of yours first (two people can share
+// a name), else from a search, where the one known for something else than acting wins.
+export async function personId(name, ref, key) {
+  if (ref && ref.type === 'movie' && goodId(ref.id)) {
+    const d = await get(`/movie/${ref.id}/credits`, {}, key);
+    const c = (d.crew || []).find((x) => x && x.job === 'Director' && goodId(x.id) && sameName(x.name, name));
+    if (c) return c.id;
+  } else if (ref && ref.type === 'tv' && goodId(ref.id)) {
+    const d = await get(`/tv/${ref.id}`, { language: 'en-US' }, key);
+    const c = (d.created_by || []).find((x) => x && goodId(x.id) && sameName(x.name, name));
+    if (c) return c.id;
+  }
+  const s = await get('/search/person', { query: name, include_adult: 'false', language: 'en-US', page: '1' }, key);
+  const hits = (s.results || []).filter((p) => p && goodId(p.id) && sameName(p.name, name));
+  const pick = hits.find((p) => p.known_for_department && p.known_for_department !== 'Acting') || hits[0];
+  return pick ? pick.id : null;
+}
+
+// What someone made: the movies they directed, the shows they created (or directed most of).
+export async function workOf(id, key) {
+  const d = await get(`/person/${id}/combined_credits`, { language: 'en-US' }, key);
+  const out = [];
+  for (const c of d.crew || []) {
+    if (!c) continue;
+    const made = c.media_type === 'movie' ? c.job === 'Director'
+      : c.media_type === 'tv' && (c.job === 'Creator' || (c.job === 'Director' && (c.episode_count || 0) >= 4));
+    const x = made ? candidateOf(c) : null;
+    if (x && !out.some((y) => y.type === x.type && y.id === x.id)) out.push(x);
+  }
+  return out;
+}
+
+// A theme (TMDB's keywords) by name: its number.
+export async function keywordId(word, key) {
+  const d = await get('/search/keyword', { query: word, page: '1' }, key);
+  const hit = (d.results || []).find((k) => k && goodId(k.id) && sameName(k.name, word));
+  return hit ? hit.id : null;
+}
+
+// The best-liked titles with a theme: movies, shows or anime, whichever you watch it in.
+export async function themeTop(id, aim, key) {
+  const movie = aim === 'movie';
+  const params = { with_keywords: String(id), sort_by: 'vote_average.desc', 'vote_count.gte': movie ? '300' : '100', include_adult: 'false', language: 'en-US', page: '1' };
+  if (aim === 'anime') Object.assign(params, { with_genres: '16', with_original_language: 'ja' });
+  return candidates((await get(movie ? '/discover/movie' : '/discover/tv', params, key)).results, movie ? 'movie' : 'tv');
+}

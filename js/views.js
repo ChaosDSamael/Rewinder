@@ -1,6 +1,7 @@
 // Rewinder — screens. Each function returns HTML; every piece of user text goes through esc().
 import * as M from './model.js';
 import * as L from './importer.js';
+import * as FY from './foryou.js';
 import { esc, icon, rater, miniStars, corners, visor, poster, statusDot } from './ui.js';
 
 const tHref = (t) => `#/title/${encodeURIComponent(t.id)}`;
@@ -117,9 +118,9 @@ export function moveCodeDialog(code, name) {
   return `<div class="dlg-form">
 <div class="dlg-head"><h2 class="dlg-title" id="dlg-move">Add another device</h2></div>
 <p class="dlg-text">On your other device: Settings → Friends → <strong>Add this device</strong>, then paste this code. It becomes ${esc(name)} too, with the same list. This device stays ${esc(name)}.</p>
-<label class="sr" for="move-code">Your code</label><textarea id="move-code" class="input move-code" rows="3" readonly spellcheck="false">${esc(code)}</textarea>
+<label class="sr" for="move-code">Your code</label><textarea id="move-code" class="input move-code secret" rows="3" readonly spellcheck="false">${esc(code)}</textarea>
 <p class="dlg-note">It works once, for 15 minutes, and it opens your whole list. Send it only to yourself, never to someone who asks for it, even a friend.</p>
-<div class="dlg-actions"><button type="button" class="btn btn-ghost" data-action="dlg-close">Close</button><button type="button" class="btn btn-primary" data-action="live-copy">Copy the code</button></div>
+<div class="dlg-actions"><button type="button" class="btn btn-ghost" data-action="dlg-close">Close</button><button type="button" class="btn btn-ghost" data-action="reveal" data-for="move-code">Show</button><button type="button" class="btn btn-primary" data-action="live-copy">Copy the code</button></div>
 </div>`;
 }
 
@@ -327,9 +328,87 @@ export function homeView(state) {
     { id: 'recent', title: 'Recently Added', items: [...all].sort((a, b) => b.createdAt.localeCompare(a.createdAt)) }
   ];
   for (const g of M.topGenres(all)) rows.push({ id: 'g-' + g.toLowerCase().replace(/[^a-z0-9]+/g, '-'), title: g, items: all.filter((t) => t.genres.includes(g)).sort(byActivity), see: { genre: g } });
+  const html = rows.filter((r) => r.items.length).map(rowSection);
+  html.splice(Math.min(1, html.length), 0, forYouRow(state));
   return `<div class="page page-home">
 ${hero ? heroBlock(hero, state, heroes) : all.length ? '' : heroWelcome()}
-${rows.filter((r) => r.items.length).map(rowSection).join('')}
+${html.join('')}
+</div>`;
+}
+
+/* ---------- For you ---------- */
+
+const FY_SOURCE = { tmdb: 'TMDB', rawg: 'RAWG' };
+
+// One suggestion: its poster (opens what it is about), why it is here, and the three answers.
+function fyCard(s) {
+  const w = FY.why(s.why[0]);
+  const meta = [M.KIND_LABEL[s.kind], s.year].filter(Boolean).join(' · ');
+  return `<div class="card fy-card" data-key="fy-${esc(s.key)}">
+<button type="button" class="fy-open" data-action="fy-open" data-key="${esc(s.key)}" aria-label="${esc(`${s.title}, ${meta}. ${w.main}`)}">${poster({ id: s.key, title: s.title, kind: s.kind, poster: s.poster })}</button>
+<span class="card-title">${esc(s.title)}</span><span class="card-meta">${esc(meta)}</span>
+<span class="fy-why">${esc(w.main)}</span>${w.detail ? `<span class="fy-detail">${esc(w.detail)}</span>` : ''}
+<span class="fy-acts"><button type="button" class="btn btn-primary btn-sm" data-action="fy-watch" data-key="${esc(s.key)}" aria-label="${esc(`Add ${s.title} to your watchlist`)}">${icon.plus}Watchlist</button>
+<span class="fy-more"><button type="button" class="link-btn" data-action="fy-seen" data-key="${esc(s.key)}" aria-label="${esc(`${s.title}: seen it`)}">Seen it</button><button type="button" class="link-btn" data-action="fy-skip" data-key="${esc(s.key)}" aria-label="${esc(`${s.title}: not for me`)}">Not for me</button></span></span>
+</div>`;
+}
+
+function forYouRow(state) {
+  const list = FY.current(state).slice(0, FY.FY_ROW);
+  if (!list.length) return '';
+  return `<section class="row-sec fy-row" data-key="row-foryou" aria-labelledby="row-foryou">
+<div class="row-head"><h2 class="h2" id="row-foryou"><span class="sq" aria-hidden="true"></span>For you</h2><button type="button" class="link-btn" data-action="fy-all">See all</button></div>
+<div class="row">${list.map(fyCard).join('')}</div>
+</section>`;
+}
+
+const FY_SECTIONS = [
+  ['franchise', 'Your franchises'],
+  ['people', 'The people you love'],
+  ['theme', 'Themes you love'],
+  ['friend', 'Your friends\' favorites']
+];
+
+export function forYouView(state) {
+  const fy = state.foryou;
+  const list = FY.current(state);
+  const keys = Boolean(state.settings.tmdbKey || state.settings.rawgKey);
+  const ago = fy.at ? Math.round(Math.abs(Date.now() - Date.parse(fy.at)) / 36e5) : null;
+  const status = fy.busy ? 'Looking for new suggestions…'
+    : fy.error ? `${fy.error} The last suggestions stay.`
+      : ago === null ? '' : ago < 1 ? 'Looked less than an hour ago.' : `Looked ${ago} hour${ago === 1 ? '' : 's'} ago. A new look comes once a day.`;
+  const head = `<div class="page-head"><div class="titles"><span class="eyebrow">// Picked from what you love</span><h1 class="display display-md">For you</h1></div>${keys ? `<button type="button" class="btn btn-ghost" data-action="fy-refresh"${fy.busy ? ' disabled' : ''}>Look again</button>` : ''}</div>`;
+  const intro = '<p class="set-text dim">Franchises you started, the directors, creators and studios you love, your favorite themes, and your friends\' best. Watchlist adds it; Seen it adds it as completed; Not for me hides it for good.</p>';
+  const empty = !keys
+    ? `<div class="empty-box"><p class="lead">For you looks things up with your TMDB key, and RAWG's for games.</p><p class="set-text dim">Your friends' favorites show up here without one.</p><a class="btn btn-primary" href="#/settings">Settings</a></div>`
+    : fy.empty
+      ? '<div class="empty-box"><p class="lead">Rate a few titles, or give your favorites a heart.</p><p class="set-text dim">A franchise, a director or a theme counts once two titles of yours are in it, or one with a heart.</p></div>'
+      : fy.busy ? '' : '<div class="empty-box"><p class="lead">Nothing new for now.</p><p class="set-text dim">Suggestions come as you rate more titles.</p></div>';
+  const sections = FY_SECTIONS.map(([id, title]) => {
+    const items = list.filter((x) => FY.sectionOf(x) === id);
+    if (!items.length) return '';
+    return `<section class="fy-sec" data-key="fy-sec-${id}" aria-labelledby="fy-h-${id}"><h2 class="h2" id="fy-h-${id}"><span class="sq" aria-hidden="true"></span>${title}<span class="count">${items.length}</span></h2>
+<div class="fy-grid">${items.map(fyCard).join('')}</div></section>`;
+  }).join('');
+  return `<div class="page page-foryou">${head}${intro}${status ? `<p class="fy-status" role="status">${esc(status)}</p>` : ''}
+${sections || empty}
+${list.some((x) => x.src === 'tmdb' || x.src === 'rawg') ? '<p class="set-text dim fy-credit">Suggestions from TMDB and RAWG, with your own keys.</p>' : ''}
+</div>`;
+}
+
+export function forYouDialog(s) {
+  const meta = [M.KIND_LABEL[s.kind], s.year].filter(Boolean).join(' · ');
+  const link = s.src === 'tmdb' ? `https://www.themoviedb.org/${s.type === 'tv' ? 'tv' : 'movie'}/${s.id}` : s.src === 'rawg' && s.slug ? `https://rawg.io/games/${s.slug}` : '';
+  const rated = typeof s.rating === 'number' && s.votes ? `${FY_SOURCE[s.src]}: ${s.rating.toFixed(1)} / 10, ${s.votes.toLocaleString('en-US')} vote${s.votes === 1 ? '' : 's'}` : '';
+  return `<div class="dlg-form fy-dlg">
+<button type="button" class="icon-btn fy-x" data-action="dlg-close" aria-label="Close" title="Close">${icon.x}</button>
+<div class="fy-dlg-top">${poster({ id: s.key, title: s.title, kind: s.kind, poster: s.poster })}<div class="fy-dlg-main">
+<h2 class="dlg-title" id="dlg-fy">${esc(s.title)}</h2><p class="card-meta">${esc([meta, rated].filter(Boolean).join(' · '))}</p>
+<ul class="fy-reasons">${s.why.map((x) => { const w = FY.why(x); return `<li><span class="fy-why">${esc(w.main)}</span>${w.detail ? ` <span class="fy-detail">${esc(w.detail)}</span>` : ''}</li>`; }).join('')}</ul>
+</div></div>
+${s.overview ? `<p class="dlg-text fy-over">${esc(s.overview)}</p>` : ''}
+${link ? `<a class="small-link" href="${esc(link)}" target="_blank" rel="noopener">On ${FY_SOURCE[s.src]} ↗</a>` : ''}
+<div class="dlg-actions"><button type="button" class="btn btn-ghost" data-action="fy-skip" data-key="${esc(s.key)}">Not for me</button><button type="button" class="btn btn-ghost" data-action="fy-seen" data-key="${esc(s.key)}">Seen it</button><button type="button" class="btn btn-primary" data-action="fy-watch" data-key="${esc(s.key)}">${icon.plus}Watchlist</button></div>
 </div>`;
 }
 
@@ -806,7 +885,7 @@ function devicesList(state) {
   return `<ul class="trash devices" aria-label="Your devices">${list.map((d) => `<li data-key="dev-${esc(d.id)}"><span class="tt"><span class="tt-main">${esc(d.label || 'Device')}${d.me ? ' <span class="dev-me">· this device</span>' : ''}</span><span class="tt-sub">added ${esc(M.fmtDate(d.at))}${!d.me && d.seen ? ' · seen ' + esc(ago(d.seen)) : ''}</span></span>${list.length > 1 ? `<span class="actions"><button type="button" class="btn btn-ghost btn-sm btn-danger" data-action="device-remove" data-id="${esc(d.id)}">${d.me ? 'Remove this device' : 'Remove'}</button></span>` : ''}</li>`).join('')}</ul>`;
 }
 
-const ADD_HERE = `<details class="set-more"><summary>Add this device</summary><form class="live-here" data-form="live-here" autocomplete="off"><label class="field"><span class="label">Code from your other device</span><input id="live-code" name="movecode" class="input" placeholder="RW3.…" autocomplete="off" spellcheck="false" autocapitalize="off"></label><div class="actions"><button type="submit" class="btn btn-ghost">Add this device</button></div></form><span class="panel-sub">On your other device: Settings → Friends → Add another device. Both keep your name, with the same list.</span></details>`;
+const ADD_HERE = `<details class="set-more"><summary>Add this device</summary><form class="live-here" data-form="live-here" autocomplete="off"><div class="field"><label class="label" for="live-code">Code from your other device</label><div class="key-row"><input id="live-code" name="movecode" class="input secret" placeholder="RW3.…" autocomplete="off" spellcheck="false" autocapitalize="off"><button type="button" class="btn btn-ghost btn-sm" data-action="reveal" data-for="live-code">Show</button></div></div><div class="actions"><button type="submit" class="btn btn-ghost">Add this device</button></div></form><span class="panel-sub">On your other device: Settings → Friends → Add another device. Both keep your name, with the same list.</span></details>`;
 
 // Settings → Friends: your Rewinder name (made, on your devices, removed) and the server it lives on.
 function liveSettings(state) {
@@ -841,7 +920,7 @@ ${server}`;
   return `<p class="set-text">Add friends by their name, and your cards stay up to date by themselves. Pick your Rewinder name once, with the invite code Sonny gave you.</p>
 <form class="live-claim" data-form="live-claim" autocomplete="off">
 <label class="field"><span class="label">Your Rewinder name</span><input id="live-name" name="livename" class="input" maxlength="24" placeholder="ChaosDSamael" autocomplete="off" spellcheck="false" autocapitalize="off"></label>
-<label class="field"><span class="label">Invite code</span><input id="live-invite" name="invite" class="input" maxlength="80" autocomplete="off" spellcheck="false" autocapitalize="off"></label>
+<div class="field"><label class="label" for="live-invite">Invite code</label><div class="key-row"><input id="live-invite" name="invite" class="input secret" maxlength="80" autocomplete="off" spellcheck="false" autocapitalize="off"><button type="button" class="btn btn-ghost btn-sm" data-action="reveal" data-for="live-invite">Show</button></div></div>
 <div class="actions"><button type="submit" class="btn btn-primary">Create my name</button></div>
 </form>
 <p class="panel-sub">3 to 24 letters or numbers (. _ - inside). On the server: your card for your friends (titles, scores, statuses, favorites, tags; Sonny, who runs the server, can see it), and your whole list for your devices, locked with a key that stays on them. Never your API keys.</p>
@@ -1183,16 +1262,26 @@ export function guidesView(state) {
   const panes = {
     pc: [
       step('Install it', 'In Chrome, Edge or Brave, click the install icon at the right end of the address bar, or open the browser menu and choose <b>Install</b>. Rewinder then opens in its own window and works without internet.', state.canInstall ? `<button type="button" class="btn btn-primary" data-action="install">${icon.install}Install now</button>` : ''),
-      step('Your keys', 'Scan needs your free TMDB key, and a RAWG key for games. The start guide walks you through it.', '<button type="button" class="btn btn-ghost" data-action="guide-open">Open the start guide</button>'),
+      step('Your keys', 'Scan needs your free TMDB key, and a RAWG key for games. The start guide walks you through it. Your keys stay on this device: never in a backup, a card or on the server.', '<button type="button" class="btn btn-ghost" data-action="guide-open">Open the start guide</button>'),
+      ...(state.liveServer ? [
+        step('Your Rewinder name', '<b>Settings → Friends</b>: pick your name, with the invite code Sonny gave you. Friends add you by that name, and your list can follow you on your other devices.', '<button type="button" class="btn btn-ghost" data-action="live-settings">Go to Settings → Friends</button>'),
+        step('Your friends', '<b>Friends → Add a friend by name</b>, then <b>Ask</b>. Once they accept, their card stays up to date by itself: your scores side by side, what you have both seen, and their best ones you haven\'t, ready for your watchlist.')
+      ] : []),
+      step('For you', 'On <b>Home</b>, the <b>For you</b> row: titles picked from what you love, each with why; <b>See all</b> opens them all. The franchises you started, the directors, creators and studios you rate high, your favorite themes, your friends\' best. <b>Watchlist</b>, <b>Seen it</b> or <b>Not for me</b>: one click each.', '<a class="btn btn-ghost" href="#/for-you">Open For you</a>'),
       step('Keep a copy', '<b>Settings → Download backup</b> saves your whole list in one file. In Chrome and Edge, Rewinder can also save a copy in a folder of yours, once a day.'),
       step('On the TV', 'See the <b>TV</b> tab: an HDMI cable, or Chrome’s <b>Cast</b> to a Chromecast. No sign-up needed.')
     ],
     phone: [
       step('Android', 'Open the link in Chrome, then <b>⋮ → Install app</b> (or <b>Add to Home screen</b>). Rewinder gets its own icon.'),
       step('iPhone and iPad', 'Open the link in Safari, then <b>Share → Add to Home Screen</b>. Do it first, then always open Rewinder from that icon: it keeps its own list, apart from Safari, and Safari can erase a website’s data after 7 days without a visit.'),
-      step('Your list from the computer', 'Each device keeps its own list. On the computer: <b>Settings → Download backup</b>. Send the file to yourself (email, Discord, Drive). On the phone: <b>Settings → Restore a backup</b>. Your keys are never in a backup: paste them again in Settings.'),
+      ...(state.liveServer ? [
+        step('The same list as your computer', 'With your Rewinder name. On the computer: <b>Settings → Friends → Add another device</b>, then <b>Copy the code</b> and send it to yourself (email, Discord). It works once, for 15 minutes. On the phone: <b>Settings → Friends → Add this device</b>, paste it. From then on, a change on one shows up on the other.')
+      ] : []),
+      step(state.liveServer ? 'Without a name' : 'Your list from the computer', 'On the computer: <b>Settings → Download backup</b>. Send the file to yourself. On the phone: <b>Settings → Restore a backup</b>. Each device then keeps its own list.'),
+      step('Your keys', 'They stay on each device: for the Scan on the phone too, paste them in <b>Settings → Web search keys</b>.'),
       step('Find your way', 'The bar at the bottom: <b>Home</b>, <b>All</b>, <b>Scan</b>, <b>List</b> and <b>Friends</b>. Search and Settings are at the top.'),
-      step('Friends', '<b>Friends → Share my card</b> opens the share menu: Messenger, Discord, texts. A card you receive: save the file, then <b>Friends → Add a friend’s card</b>.')
+      step('For you', 'On <b>Home</b>: titles picked from what you love, each with why. <b>See all</b> opens the whole page.'),
+      step('Friends', `${state.liveServer ? 'With a name: <b>Friends → Add a friend by name</b>. Without one: ' : ''}<b>Friends → Share my card</b> opens the share menu: Messenger, Discord, texts. A card you receive: save the file, then <b>Friends → Add a friend’s card</b>.`)
     ],
     tv: [
       step('Android phone or tablet + Chromecast or Google TV', 'In the Google Home app, pick your TV, then <b>Cast my screen</b>. Turn the phone sideways.'),
@@ -1433,7 +1522,7 @@ function keyBox(which, state) {
   const id = `g-${which}`;
   const name = which === 'tmdb' ? 'TMDB' : 'RAWG';
   const msg = g.state === 'checking' ? 'Checking…' : g.state === 'ok' ? `✓ The ${name} key works.` : g.state === 'bad' ? g.msg : '';
-  return `<div class="guide-key"><label class="sr" for="${id}">${name} key</label><input id="${id}" class="input key-plain" data-guide-key="${which}" value="${esc(state.settings[which === 'tmdb' ? 'tmdbKey' : 'rawgKey'])}" placeholder="Paste your ${name} key" autocomplete="off" spellcheck="false" autocapitalize="off"><button type="button" class="btn btn-primary" data-action="guide-check" data-which="${which}"${g.state === 'checking' ? ' disabled' : ''}>Check</button></div>
+  return `<div class="guide-key"><label class="sr" for="${id}">${name} key</label><input id="${id}" class="input key-plain secret" data-guide-key="${which}" value="${esc(state.settings[which === 'tmdb' ? 'tmdbKey' : 'rawgKey'])}" placeholder="Paste your ${name} key" autocomplete="off" spellcheck="false" autocapitalize="off"><button type="button" class="btn btn-ghost" data-action="reveal" data-for="${id}">Show</button><button type="button" class="btn btn-primary" data-action="guide-check" data-which="${which}"${g.state === 'checking' ? ' disabled' : ''}>Check</button></div>
 <p class="guide-msg ${g.state}" role="status">${esc(msg)}</p>`;
 }
 
@@ -1498,10 +1587,11 @@ ${guideNav(state, ok ? 'Next' : 'Skip for now')}`;
 <button type="button" class="g-choice" data-action="guide-to" data-to="#/import">${icon.rows}<b>Import a list</b><small>Got a list in Notepad? Bring it in.</small></button>
 <button type="button" class="g-choice" data-action="guide-add">${icon.radar}<b>Add a title</b><small>Find it with the Scan, or add it by hand.</small></button>
 ${state.canInstall ? `<button type="button" class="g-choice" data-action="install">${icon.install}<b>Install Rewinder</b><small>Open it like any app, from the Start menu.</small></button>` : ''}
+${state.liveServer ? `<button type="button" class="g-choice" data-action="guide-name">${icon.bust}<b>Your Rewinder name</b><small>For friends, and your list on all your devices</small></button>` : ''}
 <button type="button" class="g-choice" data-action="guide-restore">${icon.upload}<b>Restore a backup</b><small>Moving from another computer?</small></button>
 <button type="button" class="g-choice" data-action="guide-to" data-to="#/guides">${icon.book}<b>Phone, tablet, TV</b><small>How to get Rewinder there</small></button>
 </div>
-<p class="set-text dim">Your list stays on this computer. Settings → Backup keeps a copy safe.</p>
+<p class="set-text dim">Your list stays on this computer${state.liveServer ? ', and on your other devices once you have a Rewinder name' : ''}. Settings → Backup keeps a copy safe.</p>
 <div class="guide-nav"><button type="button" class="btn btn-ghost" data-action="guide-back">Back</button><button type="button" class="btn btn-primary" id="guide-next" data-action="guide-to" data-to="#/">Go to Home</button></div>`;
 }
 

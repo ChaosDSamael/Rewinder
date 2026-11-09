@@ -72,6 +72,15 @@ Rien à installer sur la TV, pas d'inscription : tu montres ton écran dessus, p
 - **All** montre toutes tes affiches ensemble : films, séries, animes et jeux. Trie par **Best score** pour voir ton top, avec le rang (#1, #2…) sous chaque affiche. Pratique pour ajuster une note qui te semble trop haute ou trop basse.
 - Sur une fiche, **Directed by** (films), **Created by** (séries, animes) ou **Studio** (jeux). Un clic sur le nom montre tout ce que tu as de cette personne dans la **Full List**. La recherche trouve aussi les réalisateurs. Pour les titres déjà dans ta liste, Rewinder va chercher les noms une fois, tout seul (il faut ta clé TMDB, ou RAWG pour les jeux).
 
+## For you
+
+- Des titres choisis à partir de ce que tu aimes, chacun avec sa raison : une rangée **For you** sur l'accueil, pis sa page avec tout (**See all**).
+- D'où ils viennent : les morceaux qui te manquent d'une franchise que t'aimes (« Because you love Alien »), les autres œuvres des réalisateurs, créateurs pis studios que tu notes haut, des titres bien notés avec tes thèmes préférés (voyage dans le temps, souls-like…), la série d'un jeu que t'aimes, pis les favoris de tes amis (un cœur, ou 8 et plus) que t'as pas vus.
+- Ce qui compte comme aimer : ta note (5, c'est neutre), un cœur, un titre terminé (un peu), un titre lâché (non). La watchlist pis On Hold ne disent rien. Une franchise, un réalisateur ou un thème compte à partir de deux titres, ou d'un seul avec un cœur.
+- **Watchlist** l'ajoute à ta watchlist ; **Seen it** l'ajoute en Completed (vu, date inconnue) pis ouvre sa fiche pour que tu le notes ; **Not for me** le cache pour de bon, sur cet appareil. Un clic sur l'affiche montre le résumé pis un lien vers TMDB ou RAWG. Ce qui vient d'un ami arrive avec « Recommended by » lui.
+- Rewinder regarde une fois par jour au plus, avec tes clés à toi : TMDB pour les films, séries pis animes, RAWG pour les jeux. **Look again** regarde tout de suite (pas deux fois en deux minutes). Sans clé, juste les favoris de tes amis.
+- Rien ne sort de ton appareil à part ces questions à TMDB pis RAWG : quelle franchise, quelle personne, quel thème.
+
 ## Les dates
 
 - Une série mise **Completed** te demande si tu veux cocher les épisodes déjà sortis : à la date que tu choisis (aujourd'hui par défaut), avec la date inconnue, ou juste le statut.
@@ -123,6 +132,7 @@ Ce qui protège Rewinder pis tes amis :
 
 - Tout ce qui vient de l'extérieur (TMDB, RAWG, AniList, une carte d'ami, une copie de sauvegarde, le serveur) est affiché comme du texte, jamais exécuté. Un test bourre chaque champ de pièges à chaque version.
 - Une règle de sécurité (Content-Security-Policy) empêche tout script qui ne vient pas de Rewinder, pis les images d'ailleurs que TMDB ou RAWG. Rewinder refuse de s'ouvrir à l'intérieur d'une autre page.
+- À l'écran, tes clés TMDB pis RAWG, le code d'invitation pis les codes d'appareil s'affichent en points, même dans le guide de démarrage : **Show** les montre. Pratique pour filmer ton écran.
 - Tes clés TMDB pis RAWG vont seulement chez TMDB pis RAWG. Elles ne vont jamais dans une copie de sauvegarde ni dans une carte. Une copie de sauvegarde ne peut pas changer tes clés ni ton serveur ; elle ramène juste ta couleur pis les lignes d'écran.
 - Tout ce qui entre (un Scan, une copie de sauvegarde, une carte, ta liste d'un autre appareil) passe par la même vérification : les bons types, des tailles raisonnables (150 saisons, 20 000 épisodes par titre au maximum). Un fichier piégé ne peut pas faire planter une page ni gonfler un titre à 100 Mo.
 - Les liens vers les magasins (Steam, PlayStation, Xbox, Nintendo…) s'ouvrent seulement vers les vrais magasins. Un lien vers ailleurs est enlevé. itch.io : seulement itch.io lui-même, parce que n'importe qui peut y avoir sa propre page.

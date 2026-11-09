@@ -147,3 +147,45 @@ export async function fetchGame(id, key) {
     seasons: null
   };
 }
+
+/* ---------- For you: around the games you love ---------- */
+
+// One game from a RAWG list, in the shape For you ranks. RAWG rates out of 5: here out of 10, like TMDB.
+function candidateOf(g) {
+  if (!g || !Number.isInteger(g.id) || g.id <= 0 || !g.name) return null;
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(g.released || '') && !g.tba ? g.released : '';
+  return {
+    src: 'rawg',
+    type: 'game',
+    id: g.id,
+    kind: 'game',
+    slug: typeof g.slug === 'string' && /^[a-z0-9-]{1,120}$/.test(g.slug) ? g.slug : '',
+    title: String(g.name).trim().slice(0, 300),
+    year: yearOf(date),
+    date,
+    poster: sized(g.background_image, 420),
+    overview: '',
+    rating: typeof g.rating === 'number' && Number.isFinite(g.rating) ? Math.max(0, Math.min(10, g.rating * 2)) : null,
+    votes: Number.isInteger(g.ratings_count) && g.ratings_count > 0 ? g.ratings_count : 0,
+    genres: []
+  };
+}
+const candidates = (d) => ((d && Array.isArray(d.results) ? d.results : [])).slice(0, 100).map(candidateOf).filter(Boolean);
+
+// A game's studios and tags, with RAWG's numbers: For you asks for more of them.
+export async function gameLinks(id, key) {
+  const g = await get(`/games/${id}`, {}, key);
+  const pick = (list) => (Array.isArray(list) ? list : []).filter((x) => x && Number.isInteger(x.id) && x.id > 0 && x.name).map((x) => ({ id: x.id, name: String(x.name).slice(0, 120) }));
+  return { studios: pick(g.developers), tags: pick((g.tags || []).filter((x) => x && (!x.language || x.language === 'eng'))) };
+}
+
+// The other games of its series.
+export async function gameSeries(id, key) {
+  return candidates(await get(`/games/${id}/game-series`, { page_size: '20' }, key));
+}
+
+// The best-known games of a studio (developers) or with a tag (tags).
+export async function gamesWith(what, id, key) {
+  if (what !== 'developers' && what !== 'tags') return [];
+  return candidates(await get('/games', { [what]: String(id), ordering: '-added', page_size: '20' }, key));
+}

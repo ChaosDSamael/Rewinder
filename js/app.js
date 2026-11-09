@@ -8,6 +8,7 @@ import { animeGenres } from './anilist.js';
 import * as L from './importer.js';
 import * as S from './server.js';
 import * as Y from './sync.js';
+import * as FY from './foryou.js';
 import { esc } from './ui.js';
 import { morphChildren } from './morph.js';
 
@@ -81,6 +82,9 @@ const importDefaults = (kind = '') => ({ step: 'paste', kind, text: '', useTags:
 state.imp = importDefaults();
 state.guide = { step: 0, tmdb: { state: '', msg: '' }, rawg: { state: '', msg: '' } };
 state.friends = [];
+// For you: what the last look found and when; the TMDB and RAWG numbers found for names, so the next look asks
+// less; what you said "Not for me" to, on this device.
+state.foryou = { at: null, items: [], ids: FY.cleanIds(null), skip: new Set(), busy: false, error: '', empty: false };
 state.folder = { supported: typeof window.showDirectoryPicker === 'function', name: '', granted: false, handle: null };
 
 // Phones and tablets held upright: the poster wall picks its default size from this.
@@ -110,6 +114,7 @@ function view() {
   if (r.name === 'friend') return V.friendView(state, friendById(r.id));
   if (r.name === 'guides') return V.guidesView(state);
   if (r.name === 'added') return V.addedView(state);
+  if (r.name === 'foryou') return V.forYouView(state);
   return V.notFoundView();
 }
 
@@ -193,6 +198,7 @@ function parseRoute() {
   if (parts[0] === 'tv-mode') return { name: 'tv', section: parts[1] || 'top' };
   if (parts[0] === 'guides') return { name: 'guides' };
   if (parts[0] === 'added') return { name: 'added' };
+  if (parts[0] === 'for-you') return { name: 'foryou' };
   if (parts[0] === 'friend' && parts[1]) return { name: 'friend', id: parts[1] };
   return { name: 'notfound' };
 }
@@ -235,6 +241,10 @@ function onRoute() {
   render();
   if (!sameTitle) {
     window.scrollTo(0, 0);
+    // A link to one part of a page (Settings → Friends) opens there.
+    const spot = state.ui.scrollTo && document.getElementById(state.ui.scrollTo);
+    state.ui.scrollTo = null;
+    if (spot) (spot.closest('section') || spot).scrollIntoView({ block: 'start' });
     if (!root.contains(document.activeElement) || document.activeElement === root) {
       const main = document.getElementById('main');
       if (main) main.focus({ preventScroll: true });
@@ -246,9 +256,10 @@ function onRoute() {
       : r.name === 'browse' ? `${r.kind === 'all' ? 'All' : M.KIND_TAB[r.kind]} · Rewinder`
         : r.name === 'settings' ? 'Settings · Rewinder' : r.name === 'import' ? 'Import · Rewinder' : r.name === 'welcome' ? 'Welcome · Rewinder'
           : r.name === 'friend' && friendById(r.id) ? `${friendById(r.id).name} · Rewinder`
-            : r.name === 'tv' ? 'TV mode · Rewinder' : r.name === 'guides' ? 'Guides · Rewinder' : r.name === 'added' ? 'Just added · Rewinder' : 'Rewinder';
+            : r.name === 'tv' ? 'TV mode · Rewinder' : r.name === 'guides' ? 'Guides · Rewinder' : r.name === 'added' ? 'Just added · Rewinder' : r.name === 'foryou' ? 'For you · Rewinder' : 'Rewinder';
   if (t) loadHistory(t.id);
   if (r.name === 'settings' && prev.name !== 'settings' && liveOn()) loadDevices();
+  if (r.name === 'foryou' || r.name === 'home') refreshForYou().catch((err) => console.warn('Could not look for suggestions', err));
 }
 
 async function loadHistory(id) {
@@ -454,6 +465,7 @@ document.addEventListener('visibilitychange', () => {
     if (syncTimer) syncNow().catch((err) => console.warn('Could not sync your list', err));
   } else {
     liveRefresh().catch((err) => console.warn('Could not check your friends', err));
+    if (state.ready) refreshForYou().catch((err) => console.warn('Could not look for suggestions', err));
   }
 });
 // Left open (on a TV, a second screen): your friends and your other devices are checked every few minutes anyway.
@@ -2423,7 +2435,12 @@ async function addFromFriend(index) {
   render();
   toast(`${t.title} is in your watchlist.`, { action: { label: 'Open', run: () => go('#/title/' + encodeURIComponent(t.id)) } });
   await log(t, `Added from ${f.name}'s card · Watchlist`);
-  // The rest (seasons, cast, where to watch) comes quietly when a key is there.
+  await fillLater(t);
+}
+
+// A title added in one click (from a friend's card, from For you): its seasons, cast and where to watch come
+// quietly afterwards, when a key is there. Completed (Seen it): its aired episodes count as seen, date unknown.
+async function fillLater(t) {
   const type = t.rawgId ? 'game' : t.tmdbType;
   const id = t.rawgId || t.tmdbId;
   const key = t.rawgId ? state.settings.rawgKey : state.settings.tmdbKey;
@@ -2432,13 +2449,184 @@ async function addFromFriend(index) {
     const data = await fetchScan(type, id, t.kind === 'anime', () => {});
     if (t.deletedAt) return;
     M.mergeScan(t, data);
-    t.status = 'watchlist';
-    t.via = f.name;
+    const seen = t.status === 'completed' ? M.markSeenUnknown(t) : '';
     await persist(t);
     requestRender();
+    if (seen) await log(t, seen);
   } catch (err) {
     console.warn('Could not fill in', t.title, err);
   }
+}
+
+/* ---------- For you ---------- */
+
+async function loadForYou() {
+  const fy = state.foryou;
+  try {
+    const saved = await store.getMeta('foryou');
+    if (saved && typeof saved === 'object') {
+      fy.at = typeof saved.at === 'string' && !Number.isNaN(Date.parse(saved.at)) ? saved.at : null;
+      fy.items = (Array.isArray(saved.items) ? saved.items : []).slice(0, FY.FY_KEEP).map(FY.cleanItem).filter(Boolean);
+      fy.ids = FY.cleanIds(saved.ids);
+    }
+    const skip = await store.getMeta('foryou-skip');
+    if (Array.isArray(skip)) fy.skip = new Set(skip.filter((k) => typeof k === 'string' && k && k.length <= 300).slice(-5000));
+  } catch (err) {
+    console.warn('Could not read For you', err);
+  }
+}
+
+const saveForYou = () => store.putMeta('foryou', { at: state.foryou.at, items: state.foryou.items, ids: state.foryou.ids });
+const saveSkips = () => store.putMeta('foryou-skip', [...state.foryou.skip]);
+
+// A new look at most once a day, or when you ask (not twice in two minutes), quietly, with your own keys. Not while
+// the app is still filling in franchises, directors and themes at start: those are what it looks from.
+let fyRun = null;
+let fyReady = false;
+function refreshForYou(force = false) {
+  if (fyRun) return fyRun;
+  const fy = state.foryou;
+  if (!state.ready || state.error || (!state.settings.tmdbKey && !state.settings.rawgKey)) return Promise.resolve();
+  if (!force && (!fyReady || groupsFilling)) return Promise.resolve();
+  if (typeof navigator.onLine === 'boolean' && !navigator.onLine) return Promise.resolve();
+  const age = fy.at ? Math.abs(Date.now() - Date.parse(fy.at)) : Infinity;
+  if (age < (force ? 120e3 : FY.FY_TTL)) return Promise.resolve();
+  fy.busy = true;
+  fy.error = '';
+  requestRender();
+  fyRun = lookForYou().catch((err) => {
+    fy.error = err && err.message ? err.message : 'Could not look for suggestions.';
+  }).finally(() => {
+    fyRun = null;
+    fy.busy = false;
+    requestRender();
+  });
+  return fyRun;
+}
+
+// Asks TMDB and RAWG about your strongest tastes, one question at a time, then ranks what came back. A source that
+// stops answering keeps what it gave; when nothing answered at all, the last look stays as it was.
+async function lookForYou() {
+  const fy = state.foryou;
+  const p = FY.plan(FY.tastes(state.titles), state.titles);
+  const nothing = !p.franchises.length && !p.makers.length && !p.themes.length && !p.games.length && !p.studios.length && !p.gameThemes.length;
+  fy.empty = nothing;
+  if (nothing) return;
+  const tmdbKey = state.settings.tmdbKey;
+  const rawgKey = state.settings.rawgKey;
+  const ids = fy.ids;
+  const found = [];
+  const problems = [];
+  let answered = 0;
+  const pause = (ms) => new Promise((done) => setTimeout(done, ms));
+  // One call, then a breath: TMDB and RAWG are shared by everyone. Not found is no answer; anything else stops the source.
+  const ask = async (call, ms) => {
+    try {
+      const out = await call();
+      answered++;
+      return out;
+    } catch (err) {
+      if (err && err.code === 'notfound') return null;
+      throw err;
+    } finally {
+      await pause(ms);
+    }
+  };
+  const because = (g, more) => ({ type: g.type, key: g.key, label: g.label, strength: g.strength, examples: g.titles.slice(0, 2).map((t) => t.title), ...more });
+  const take = (list, why) => { for (const c of list || []) found.push({ c, why }); };
+  if (tmdbKey && (p.franchises.length || p.makers.length || p.themes.length)) {
+    try {
+      for (const g of p.franchises) take(await ask(() => tmdb.franchiseMovies(g.ref, tmdbKey), 150), because(g, { seen: g.n }));
+      for (const g of p.makers) {
+        if (!ids.people[g.label]) {
+          const t = g.titles.find((x) => x.tmdbId && x.tmdbType);
+          const id = await ask(() => tmdb.personId(g.label, t ? { type: t.tmdbType, id: t.tmdbId } : null, tmdbKey), 150);
+          if (id) ids.people[g.label] = id;
+        }
+        if (ids.people[g.label]) take(await ask(() => tmdb.workOf(ids.people[g.label], tmdbKey), 150), because(g));
+      }
+      for (const g of p.themes) {
+        if (!ids.words[g.label]) {
+          const id = await ask(() => tmdb.keywordId(g.label, tmdbKey), 150);
+          if (id) ids.words[g.label] = id;
+        }
+        if (ids.words[g.label]) take(await ask(() => tmdb.themeTop(ids.words[g.label], g.aim, tmdbKey), 150), because(g));
+      }
+    } catch (err) {
+      problems.push(err && err.message ? err.message : 'TMDB did not answer.');
+    }
+  }
+  if (rawgKey && (p.games.length || p.studios.length || p.gameThemes.length)) {
+    try {
+      // A series counts like a franchise: a heart on the game, or another game of the series in your list.
+      const mine = new Set(M.live(state.titles).filter((t) => t.rawgId && FY.liking(t) !== null).map((t) => t.rawgId));
+      for (const g of p.games) {
+        const list = await ask(() => rawg.gameSeries(g.rawgId, rawgKey), 300);
+        if (list && (g.fav || list.some((c) => mine.has(c.id)))) take(list, { type: 'series', key: 'series:' + g.rawgId, label: g.title, strength: Math.max(0.3, g.v * 0.6), examples: [] });
+      }
+      for (const g of [...p.studios, ...p.gameThemes]) {
+        const bag = g.type === 'studio' ? ids.studios : ids.tags;
+        const name = g.label.toLowerCase();
+        const t = g.titles.find((x) => x.rawgId);
+        if (!bag[name] && t) {
+          const links = await ask(() => rawg.gameLinks(t.rawgId, rawgKey), 300);
+          for (const x of (links && links.studios) || []) if (!ids.studios[x.name.toLowerCase()]) ids.studios[x.name.toLowerCase()] = x.id;
+          for (const x of (links && links.tags) || []) if (!ids.tags[x.name.toLowerCase()]) ids.tags[x.name.toLowerCase()] = x.id;
+        }
+        if (bag[name]) take(await ask(() => rawg.gamesWith(g.type === 'studio' ? 'developers' : 'tags', bag[name], rawgKey), 300), because(g));
+      }
+    } catch (err) {
+      problems.push(err && err.message ? err.message : 'RAWG did not answer.');
+    }
+  }
+  if (!answered && problems.length) throw new Error(problems[0]);
+  fy.items = FY.rank(found, FY.haveIndex(state.titles), fy.skip, M.today());
+  fy.at = new Date().toISOString();
+  fy.error = problems[0] || '';
+  await saveForYou();
+}
+
+const suggestion = (key) => FY.current(state).find((x) => x.key === key) || null;
+
+function openForYou(key) {
+  const s = suggestion(key);
+  if (s) openDialog(V.forYouDialog(s), '.fy-dlg .btn-primary', 'dlg-fy');
+}
+
+// Watchlist, or Seen it (Completed: then its page, to rate it). From a friend's favorites: "Recommended by" them.
+async function addSuggestion(key, status) {
+  const s = suggestion(key);
+  if (!s) return;
+  if (dlg.open) closeDialog();
+  const friend = s.why.find((w) => w.type === 'friend');
+  const t = M.newTitle({ kind: s.kind, title: s.title, year: s.year, poster: s.poster, status, via: friend ? friend.via || friend.friend : '' });
+  if (s.src === 'tmdb') { t.tmdbType = s.type; t.tmdbId = s.id; }
+  if (s.src === 'rawg') { t.rawgId = s.id; t.rawgSlug = s.slug || ''; }
+  const seen = status === 'completed' ? M.markSeenUnknown(t) : '';
+  state.titles.push(t);
+  state.history[t.id] = [];
+  countChange();
+  await persist(t);
+  if (status === 'completed') {
+    go('#/title/' + encodeURIComponent(t.id));
+    toast(`${t.title} is in your list. Give it a score.`);
+  } else {
+    render();
+    toast(`${t.title} is in your watchlist.`, { action: { label: 'Open', run: () => go('#/title/' + encodeURIComponent(t.id)) } });
+  }
+  await log(t, `Added from For you · ${M.STATUS_LABEL[status]}`);
+  if (seen) await log(t, seen);
+  await fillLater(t);
+}
+
+async function skipSuggestion(key) {
+  const s = suggestion(key);
+  if (!s) return;
+  if (dlg.open) closeDialog();
+  state.foryou.skip.add(key);
+  render();
+  toast(`${s.title}: not for you. It won't come back.`, { action: { label: 'Undo', run: () => { state.foryou.skip.delete(key); render(); saveSkips().catch(fail); } }, timeout: 8000 });
+  await saveSkips();
 }
 
 function toggleFriends(open) {
@@ -3433,7 +3621,18 @@ const actions = {
   'guide-to': (el) => finishGuide(el.dataset.to || '#/'),
   'guide-add': async () => { await finishGuide('#/'); openScan(); },
   'guide-restore': async () => { await finishGuide('#/'); importInput.value = ''; importInput.click(); },
+  'guide-name': () => { state.ui.focusAfter = 'live-name'; state.ui.scrollTo = 'set-friends'; return finishGuide('#/settings'); },
   'guide-check': (el) => checkGuideKey(el.dataset.which),
+  'fy-open': (el) => openForYou(el.dataset.key),
+  'fy-watch': (el) => addSuggestion(el.dataset.key, 'watchlist').catch(fail),
+  'fy-seen': (el) => addSuggestion(el.dataset.key, 'completed').catch(fail),
+  'fy-skip': (el) => skipSuggestion(el.dataset.key).catch(fail),
+  'fy-refresh': () => {
+    const fy = state.foryou;
+    if (!fy.busy && fy.at && Math.abs(Date.now() - Date.parse(fy.at)) < 120e3) { toast('Rewinder just looked. Rate a few more titles and look again later.'); return; }
+    refreshForYou(true).catch(fail);
+  },
+  'fy-all': () => go('#/for-you'),
   'folder-pick': () => pickBackupFolder(),
   'folder-now': () => folderBackup(true),
   'folder-allow': () => allowBackupFolder(),
@@ -3532,7 +3731,7 @@ const actions = {
     if (!box) return;
     try { await navigator.clipboard.writeText(box.value); toast('Code copied.'); } catch { box.select(); toast('Select the code and copy it.'); }
   },
-  'live-settings': () => { state.ui.focusAfter = 'live-name'; toggleFriends(false); go('#/settings'); },
+  'live-settings': () => { state.ui.focusAfter = 'live-name'; state.ui.scrollTo = 'set-friends'; toggleFriends(false); go('#/settings'); },
   'ep-unknown': (el) => setEpisodeField(el.dataset.ep, 'watched', 'unknown').catch(fail),
   'date-unknown': (el) => setDate(el.dataset.key, 'unknown').catch(fail),
   'date-close': () => closeDateEdit(),
@@ -3856,6 +4055,7 @@ async function start() {
   }
   await loadBackupFolder();
   if (!state.error) state.friends = await loadFriends();
+  if (!state.error) await loadForYou();
   onRoute();
   registerWorker();
   if (!state.error) resumeBatch().catch((err) => console.warn('Could not finish the last Add several', err));
@@ -3873,7 +4073,9 @@ async function start() {
       .then(() => fillMakers())
       .catch((err) => console.warn('Could not fill who made the titles', err))
       .then(() => fillGroups())
-      .catch((err) => console.warn('Could not find the franchises', err));
+      .catch((err) => console.warn('Could not find the franchises', err))
+      .then(() => { fyReady = true; return refreshForYou(); })
+      .catch((err) => console.warn('Could not look for suggestions', err));
     autoFolderBackup().catch((err) => console.warn('Folder backup failed', err));
   }, 2500);
   setTimeout(nudgeShare, 4000);
