@@ -1154,3 +1154,5 @@ a.bat-title:hover { color: var(--accent); }
   .fy-grid .fy-card .poster { width: 100%; height: auto; aspect-ratio: 2 / 3; }
   .fy-dlg-top .poster { width: 96px; height: 144px; }
 }
+.scan-kinds { margin-top: -4px; }
+.scan-kinds .chip { min-height: 36px; padding: 0 12px; font-size: 12px; }

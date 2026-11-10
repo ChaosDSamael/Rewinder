@@ -62,8 +62,11 @@ const FAMILY = { PlayStation: 'PlayStation', Xbox: 'Xbox', Nintendo: 'Nintendo',
 
 const uniq = (list) => list.filter((v, i) => v && list.indexOf(v) === i);
 
-export async function search(query, key, signal) {
-  const data = await get('/games', { search: query, search_precise: 'true', page_size: '8' }, key, signal, 10000);
+// With a year, only the games out that year.
+export async function search(query, key, signal, year) {
+  const params = { search: query, search_precise: 'true', page_size: '8' };
+  if (year) params.dates = `${year}-01-01,${year}-12-31`;
+  const data = await get('/games', params, key, signal, 10000);
   return (data.results || []).filter((g) => g && Number.isInteger(g.id) && g.name).map((g) => ({
     type: 'game',
     id: g.id,

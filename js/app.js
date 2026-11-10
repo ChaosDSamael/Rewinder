@@ -637,9 +637,9 @@ function kindFromPage(kind) {
   return r.name === 'browse' && M.KINDS.includes(r.kind) ? r.kind : '';
 }
 
-function openAdd(kind, title = '') {
+function openAdd(kind, title = '', year = null) {
   const k = kindFromPage(kind) || 'movie';
-  openDialog(V.addDialog(k, { title, noKey: k === 'game' ? !state.settings.rawgKey : !state.settings.tmdbKey }), '#add-title');
+  openDialog(V.addDialog(k, { title, year, noKey: k === 'game' ? !state.settings.rawgKey : !state.settings.tmdbKey }), '#add-title');
   if (title) checkDuplicate(title);
 }
 
@@ -1297,7 +1297,8 @@ async function removeTag(tag) {
 
 /* ---------- the Scan ---------- */
 
-const scan = { mode: 'add', linkId: null, linkTitle: '', query: '', results: [], notes: [], sources: [], loading: false, error: '', busy: '', status: 'watchlist', kindHint: '', timer: null, controller: null };
+// kind: what you look for (all, or one of the four); kindHint: the page Scan opened from, which comes first in All.
+const scan = { mode: 'add', linkId: null, linkTitle: '', query: '', results: [], notes: [], sources: [], loading: false, error: '', busy: '', status: 'watchlist', kind: 'all', kindHint: '', timer: null, controller: null };
 
 function stopScanSearch() {
   clearTimeout(scan.timer);
@@ -1471,6 +1472,7 @@ function openScan(kind, link) {
     error: '',
     busy: '',
     status: !link && batch.on ? scan.status : 'watchlist',
+    kind: 'all',
     kindHint: k
   });
   openDialog(V.scanDialog(scan, state.titles, batch), '#scan-q');
@@ -1487,11 +1489,41 @@ function scanTyped(value) {
   scan.timer = setTimeout(runSearch, 350);
 }
 
+// What you typed, with the year if it ends with one ("9 2009"), for what you look for (All, Movies, TV Shows, Anime,
+// Games). With a year, each service is asked twice at once, with the year and without (a title can end with a
+// number, like Wonder Woman 1984), and the ones from that year come first.
+function searchJobs(q, kind) {
+  const { title, year } = M.splitYear(q);
+  const signal = scan.controller.signal;
+  const both = (asks) => Promise.allSettled(asks).then((done) => {
+    const ok = done.filter((d) => d.status === 'fulfilled');
+    if (!ok.length) throw done[0].reason;
+    const seen = new Set();
+    return ok.flatMap((d) => d.value).filter((r) => !seen.has(r.type + ':' + r.id) && seen.add(r.type + ':' + r.id));
+  });
+  const jobs = {};
+  if (scan.sources.includes('tmdb') && kind !== 'game') {
+    const key = state.settings.tmdbKey;
+    const movies = kind === 'all' || kind === 'movie';
+    const shows = kind === 'all' || kind === 'tv' || kind === 'anime';
+    jobs.tmdb = () => both([
+      ...(year && movies ? [tmdb.searchKind(title, 'movie', year, key, signal)] : []),
+      ...(year && shows ? [tmdb.searchKind(title, 'tv', year, key, signal)] : []),
+      kind === 'all' ? tmdb.search(q, key, signal) : tmdb.searchKind(q, kind === 'movie' ? 'movie' : 'tv', null, key, signal)
+    ]);
+  }
+  if (scan.sources.includes('rawg') && (kind === 'all' || kind === 'game')) {
+    const key = state.settings.rawgKey;
+    jobs.rawg = () => both([...(year ? [rawg.search(title, key, signal, year)] : []), rawg.search(q, key, signal)]);
+  }
+  return { jobs, year };
+}
+
 async function runSearch() {
   const q = scan.query.trim();
   if (scan.controller) scan.controller.abort();
   scan.controller = null;
-  if (q.length < 2) {
+  if (!M.searchable(q)) {
     scan.results = [];
     scan.notes = [];
     scan.loading = false;
@@ -1503,12 +1535,22 @@ async function runSearch() {
   scan.loading = true;
   scan.error = '';
   refreshScan();
+  const kind = scan.mode === 'link' ? 'all' : scan.kind;
+  const { jobs, year } = searchJobs(q, kind);
+  const sources = Object.keys(jobs);
+  if (!sources.length) {
+    scan.loading = false;
+    scan.results = [];
+    scan.error = kind === 'game' ? 'Add your RAWG key in Settings to search games.' : 'Add your TMDB key in Settings to search this.';
+    refreshScan();
+    return;
+  }
   // Both services at once. Each one's results show as soon as they come: a slow RAWG doesn't hold up TMDB's.
   const out = [];
   const show = () => {
     const answered = out.filter((o) => !o.error);
     const failed = out.filter((o) => o.error);
-    const pending = scan.sources.filter((src) => !out.some((o) => o.src === src));
+    const pending = sources.filter((src) => !out.some((o) => o.src === src));
     if (!answered.length) {
       if (pending.length) return;
       scan.loading = false;
@@ -1525,21 +1567,31 @@ async function runSearch() {
       ...pending.map((src) => `Still waiting for ${src.toUpperCase()}…`)
     ];
     const of = (src) => (answered.find((o) => o.src === src) || { results: [] }).results;
-    const hint = scan.kindHint;
+    const hint = kind === 'all' ? scan.kindHint : kind;
     let list = hint === 'game' ? [...of('rawg'), ...of('tmdb')] : [...of('tmdb'), ...of('rawg')];
-    if (hint && hint !== 'game') list = [...list.filter((r) => r.kind === hint), ...list.filter((r) => r.kind !== hint)];
+    if (kind !== 'all') list = list.filter((r) => r.kind === kind);
+    else if (hint && hint !== 'game') list = [...list.filter((r) => r.kind === hint), ...list.filter((r) => r.kind !== hint)];
+    if (year) list = [...list.filter((r) => r.year === year), ...list.filter((r) => r.year !== year)];
     scan.results = list;
     refreshScan();
   };
-  await Promise.all(scan.sources.map((src) => {
-    const job = src === 'rawg' ? rawg.search(q, state.settings.rawgKey, controller.signal) : tmdb.search(q, state.settings.tmdbKey, controller.signal);
-    return job.then((results) => ({ src, results }), (error) => ({ src, error })).then((o) => {
-      if (controller.signal.aborted) return;
-      out.push(o);
-      show();
-    });
-  }));
+  await Promise.all(sources.map((src) => jobs[src]().then((results) => ({ src, results }), (error) => ({ src, error })).then((o) => {
+    if (controller.signal.aborted) return;
+    out.push(o);
+    show();
+  })));
   if (!controller.signal.aborted) scan.controller = null;
+}
+
+// The type to look for: the search starts again with it.
+function scanKind(kind) {
+  if (!['all', ...M.KINDS].includes(kind) || kind === scan.kind) return;
+  scan.kind = kind;
+  for (const b of document.querySelectorAll('.scan-kinds [data-action="scan-kind"]')) b.setAttribute('aria-pressed', String(b.dataset.kind === kind));
+  const input = document.getElementById('scan-q');
+  if (input) input.placeholder = V.scanPlaceholder(scan);
+  clearTimeout(scan.timer);
+  runSearch();
 }
 
 // TMDB says "Animation"; AniList knows the real anime genres. If it doesn't answer, TMDB's stay.
@@ -3535,7 +3587,13 @@ function registerWorker() {
 const actions = {
   add: (el) => openScan(el.dataset.kind),
   'scan-pick': (el) => pickScan(el.dataset.type, Number(el.dataset.id), el.dataset.open),
-  'scan-manual': () => { batch.manual = scan.mode === 'add' && batch.on; openAdd(scan.kindHint, scan.query.trim()); },
+  'scan-kind': (el) => scanKind(el.dataset.kind),
+  'scan-manual': () => {
+    batch.manual = scan.mode === 'add' && batch.on;
+    // What you typed, split: "9 2009" is the title 9, from 2009, of the type you picked.
+    const typed = M.splitYear(scan.query);
+    openAdd(scan.kind && scan.kind !== 'all' ? scan.kind : scan.kindHint, typed.title, typed.year);
+  },
   'scan-done': () => { batchDialog = false; closeDialog(); go('#/added'); },
   'batch-done': () => {
     batch.queue = batch.queue.filter((j) => j.state === 'run' || j.state === 'wait');

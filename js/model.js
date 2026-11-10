@@ -1,6 +1,6 @@
 // Rewinder — data helpers. Pure functions: no DOM, no storage.
 
-export const APP_VERSION = '1.13.0';
+export const APP_VERSION = '1.14.0';
 
 export const KINDS = ['movie', 'tv', 'anime', 'game'];
 export const KIND_LABEL = { movie: 'Movie', tv: 'TV Show', anime: 'Anime', game: 'Game' };
@@ -63,6 +63,19 @@ export const epCode = (sn, en) => `S${pad2(sn)} E${pad2(en)}`;
 export const seasonName = (n) => (n === 0 ? 'Specials' : `Season ${n}`);
 export const fmtScore = (v) => (typeof v === 'number' ? v.toFixed(1) : '—');
 export const live = (titles) => titles.filter((t) => !t.deletedAt);
+
+// "9 2009", "Alien (1979)": a title and the year it came out. A year alone is a title (1917), and so is a number
+// too far ahead to be a year yet (Blade Runner 2049).
+export function splitYear(query) {
+  const q = String(query || '').trim();
+  const m = q.match(/^(.*?\S)\s*[([]?\s*((?:18|19|20)\d{2})\s*[)\]]?$/);
+  if (!m || Number(m[2]) > new Date().getFullYear() + 3) return { title: q, year: null };
+  const title = m[1].replace(/[\s,:(\[–-]+$/, '').trim();
+  return title ? { title, year: Number(m[2]) } : { title: q, year: null };
+}
+
+// Long enough to search: two characters, or one digit (the movie 9).
+export const searchable = (q) => { const t = String(q || '').trim(); return t.length >= 2 || /^\d$/.test(t); };
 
 export function today() {
   const d = new Date();

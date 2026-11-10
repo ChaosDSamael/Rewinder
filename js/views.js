@@ -1004,7 +1004,7 @@ export const errorView = (message) => `<div class="page"><div class="empty-box">
 
 const kindPicker = (selected) => `<fieldset class="seg"><legend class="label">Category</legend><div class="seg-opts">${M.KINDS.map((k) => `<label class="seg-opt"><input type="radio" name="kind" value="${k}"${k === selected ? ' checked' : ''}><span>${M.KIND_LABEL[k]}</span></label>`).join('')}</div></fieldset>`;
 
-export function addDialog(kind, { title = '', noKey = false } = {}) {
+export function addDialog(kind, { title = '', year = null, noKey = false } = {}) {
   const note = noKey && kind !== 'game'
     ? 'Tip: add your TMDB key in Settings and the Scan fills in posters, episodes and cast for you.'
     : kind === 'game' && noKey
@@ -1017,7 +1017,7 @@ ${kindPicker(M.KINDS.includes(kind) ? kind : 'movie')}
 <label class="field"><span class="label">Title</span><input id="add-title" class="input" name="title" maxlength="300" value="${esc(title)}" required></label>
 <p class="dup" id="add-dup" hidden></p>
 <div class="field-row">
-<label class="field"><span class="label">Year <span class="opt">optional</span></span><input class="input" name="year" type="number" min="1870" max="2100" placeholder="2024"></label>
+<label class="field"><span class="label">Year <span class="opt">optional</span></span><input class="input" name="year" type="number" min="1870" max="2100" placeholder="2024"${Number.isInteger(year) ? ` value="${year}"` : ''}></label>
 <label class="field"><span class="label">Status</span><select class="select" name="status">${M.STATUSES.map((s) => `<option value="${s}"${s === 'watchlist' ? ' selected' : ''}>${M.STATUS_LABEL[s]}</option>`).join('')}</select></label>
 </div>
 <div class="field-row only-series">
@@ -1348,7 +1348,7 @@ export function scanResults(scan, titles) {
   if (scan.error) return `<p class="dlg-error scan-msg">${esc(scan.error)}</p>`;
   const notes = (scan.notes || []).map((n) => `<p class="scan-note">${esc(n)}</p>`).join('');
   if (scan.loading) return '<p class="scan-hint">Searching…</p>';
-  if (scan.query.trim().length < 2) return `${notes}<p class="scan-hint">Type a title. Results come from ${scan.sources.map((x) => x.toUpperCase()).join(' and ')}.</p>`;
+  if (!M.searchable(scan.query)) return `${notes}<p class="scan-hint">Type a title. Results come from ${scan.sources.map((x) => x.toUpperCase()).join(' and ')}.</p>`;
   if (!scan.results.length) return `${notes}<p class="scan-hint">Nothing found.${scan.mode === 'link' ? ' Try another spelling.' : ' Try another spelling, or add it by hand.'}</p>`;
   return `${notes}<ul class="scan-list">${scan.results.map((r) => {
     const mine = titles.find((t) => !t.deletedAt && t.id !== scan.linkId && (r.type === 'game' ? t.rawgId === r.id : t.tmdbId === r.id && t.tmdbType === r.type));
@@ -1378,15 +1378,31 @@ export function scanFootButtons(scan, batch) {
   return `${link ? '' : '<button type="button" class="btn btn-dashed" data-action="scan-manual">Add it by hand</button>'}${!link && n ? `<button type="button" class="btn btn-primary" data-action="scan-done" id="scan-done">Done · review ${n}</button>` : ''}<button type="button" class="btn btn-ghost" data-action="dlg-close">Close</button>`;
 }
 
+// What the search field says: what you can look for, and that a year narrows it.
+export function scanPlaceholder(scan) {
+  const what = scan.kind && scan.kind !== 'all' ? M.KIND_LABEL[scan.kind]
+    : scan.sources.includes('tmdb') && scan.sources.includes('rawg') ? 'Movie, TV show, anime or game' : scan.sources.includes('rawg') ? 'Game' : 'Movie, TV show or anime';
+  return `${what}, and the year if you like: 9 2009`;
+}
+
+// All, Movies, TV Shows, Anime, Games: only the ones a key of yours can search.
+function scanKinds(scan) {
+  const can = (k) => (k === 'game' ? scan.sources.includes('rawg') : scan.sources.includes('tmdb'));
+  const kinds = M.KINDS.filter(can);
+  if (kinds.length < 2) return '';
+  return `<div class="chips scan-kinds" role="group" aria-label="Look for">${[['all', 'All'], ...kinds.map((k) => [k, M.KIND_TAB[k]])].map(([k, label]) => `<button type="button" class="chip" data-action="scan-kind" data-kind="${k}" aria-pressed="${(scan.kind || 'all') === k}">${label}</button>`).join('')}</div>`;
+}
+
 export function scanDialog(scan, titles, batch) {
   const link = scan.mode === 'link';
   return `<div class="dlg-form scan" data-scan>
 <div class="dlg-head"><span class="eyebrow">// Scan</span><h2 class="dlg-title" id="dlg-title">${link ? `Find ${esc(scan.linkTitle)}` : 'Add a title'}</h2></div>
 ${link ? '<p class="dlg-note">Pick the right one: posters, episodes, dates and cast fill in. Your checks, scores and notes stay.</p>' : ''}
 <form class="scan-bar" data-form="scan-search" role="search" autocomplete="off">
-<div class="search scan-search">${icon.search}<label class="sr" for="scan-q">Search</label><input id="scan-q" type="search" name="q" value="${esc(scan.query)}" placeholder="${scan.sources.includes('tmdb') && scan.sources.includes('rawg') ? 'Movie, TV show, anime or game' : scan.sources.includes('rawg') ? 'Game' : 'Movie, TV show or anime'}" spellcheck="false"></div>
+<div class="search scan-search">${icon.search}<label class="sr" for="scan-q">Search</label><input id="scan-q" type="search" name="q" value="${esc(scan.query)}" placeholder="${esc(scanPlaceholder(scan))}" spellcheck="false"></div>
 ${link ? '' : `<label class="sr" for="scan-status">Status</label><select id="scan-status" class="select" name="status">${M.STATUSES.map((s) => `<option value="${s}"${s === scan.status ? ' selected' : ''}>${M.STATUS_LABEL[s]}</option>`).join('')}</select>`}
 </form>
+${link ? '' : scanKinds(scan)}
 ${link ? '' : `<div class="scan-multi"><label class="switch switch-sm"><input type="checkbox" role="switch" id="scan-multi"${batch && batch.on ? ' checked' : ''}><span class="switch-ui" aria-hidden="true"></span>Add several</label><span class="scan-multi-note">Stay here and keep adding, rate them all after.</span></div>`}
 <div class="scan-results" id="scan-results" aria-live="polite">${scanResults(scan, titles)}</div>
 ${link ? '' : `<div class="scan-tally" id="scan-tally" aria-live="polite">${scanTally(batch)}</div>`}
